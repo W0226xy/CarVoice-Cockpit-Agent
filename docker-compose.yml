@@ -1,0 +1,4 @@
+name: carvoice-cockpit-agent
+
+# Services will be added when persistence and deployment enter scope.
+services: {}
