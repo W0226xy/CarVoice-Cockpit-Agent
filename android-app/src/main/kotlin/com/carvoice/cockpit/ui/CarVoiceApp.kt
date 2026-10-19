@@ -20,24 +20,36 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.carvoice.cockpit.BuildConfig
+import com.carvoice.cockpit.data.AgentConnection
+import com.carvoice.cockpit.data.AgentConnectionConfig
+import com.carvoice.cockpit.data.WebSocketConversationRepository
 import com.carvoice.cockpit.model.WorkspaceDestination
 import com.carvoice.cockpit.ui.conversation.ConversationScreen
 import com.carvoice.cockpit.ui.conversation.ConversationUiState
 import com.carvoice.cockpit.ui.conversation.ConversationViewModel
+import com.carvoice.cockpit.ui.conversation.ConversationViewModelFactory
 import com.carvoice.cockpit.ui.knowledge.KnowledgeBaseScreen
 import com.carvoice.cockpit.ui.sidebar.ChatSidebar
-import com.carvoice.cockpit.ui.theme.CarVoiceCockpitTheme
+import com.carvoice.cockpit.ui.sidebar.DeleteConversationDialog
 import kotlinx.coroutines.launch
 
 @Composable
 fun CarVoiceApp(
     modifier: Modifier = Modifier,
-    conversationViewModel: ConversationViewModel = viewModel(),
+    conversationViewModel: ConversationViewModel? = null,
 ) {
-    val conversationState by conversationViewModel.uiState.collectAsState()
+    val defaultFactory = remember {
+        ConversationViewModelFactory(
+            WebSocketConversationRepository(
+                AgentConnection(AgentConnectionConfig(BuildConfig.CHAT_WS_URL)),
+            ),
+        )
+    }
+    val resolvedViewModel = conversationViewModel ?: viewModel(factory = defaultFactory)
+    val conversationState by resolvedViewModel.uiState.collectAsState()
 
     Surface(
         modifier = modifier.fillMaxSize(),
@@ -60,16 +72,19 @@ fun CarVoiceApp(
                 Unit
             }
             val startNewConversation = {
-                conversationViewModel.startNewConversation()
+                resolvedViewModel.startNewConversation()
                 closeDrawer()
             }
             val selectConversation: (String) -> Unit = { sessionId ->
-                conversationViewModel.selectConversation(sessionId)
+                resolvedViewModel.selectConversation(sessionId)
                 closeDrawer()
             }
             val openKnowledgeBase = {
-                conversationViewModel.openKnowledgeBase()
+                resolvedViewModel.openKnowledgeBase()
                 closeDrawer()
+            }
+            val requestDeleteConversation: (String) -> Unit = { sessionId ->
+                resolvedViewModel.requestDeleteConversation(sessionId)
             }
 
             if (showPermanentSidebar) {
@@ -80,13 +95,14 @@ fun CarVoiceApp(
                         destination = conversationState.destination,
                         onNewConversation = startNewConversation,
                         onSelectConversation = selectConversation,
+                        onRequestDeleteConversation = requestDeleteConversation,
                         onOpenKnowledgeBase = openKnowledgeBase,
                         modifier = Modifier.width(312.dp),
                     )
                     Box(modifier = Modifier.weight(1f)) {
                         WorkspaceContent(
                             state = conversationState,
-                            viewModel = conversationViewModel,
+                            viewModel = resolvedViewModel,
                             onOpenSidebar = null,
                         )
                     }
@@ -105,6 +121,7 @@ fun CarVoiceApp(
                                 destination = conversationState.destination,
                                 onNewConversation = startNewConversation,
                                 onSelectConversation = selectConversation,
+                                onRequestDeleteConversation = requestDeleteConversation,
                                 onOpenKnowledgeBase = openKnowledgeBase,
                             )
                         }
@@ -112,10 +129,16 @@ fun CarVoiceApp(
                 ) {
                     WorkspaceContent(
                         state = conversationState,
-                        viewModel = conversationViewModel,
+                        viewModel = resolvedViewModel,
                         onOpenSidebar = { scope.launch { drawerState.open() } },
                     )
                 }
+            }
+            if (conversationState.deleteTargetConversationId != null) {
+                DeleteConversationDialog(
+                    onDismiss = resolvedViewModel::cancelDeleteConversation,
+                    onConfirm = resolvedViewModel::confirmDeleteConversation,
+                )
             }
         }
     }
@@ -137,6 +160,7 @@ private fun WorkspaceContent(
             onSend = viewModel::sendMessage,
             onCancelVehicleAction = viewModel::cancelVehicleAction,
             onConfirmVehicleAction = viewModel::confirmVehicleAction,
+            onRetry = viewModel::retry,
             modifier = modifier.fillMaxSize(),
         )
 
@@ -146,14 +170,5 @@ private fun WorkspaceContent(
             onOpenSidebar = onOpenSidebar,
             modifier = modifier.fillMaxSize(),
         )
-    }
-}
-
-@Preview(name = "车机应用", widthDp = 1280, heightDp = 720)
-@Composable
-private fun CarVoiceAppPreview() {
-    CarVoiceCockpitTheme {
-        val previewViewModel = remember { ConversationViewModel() }
-        CarVoiceApp(conversationViewModel = previewViewModel)
     }
 }

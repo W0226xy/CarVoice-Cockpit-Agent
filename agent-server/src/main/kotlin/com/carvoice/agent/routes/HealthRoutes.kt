@@ -11,9 +11,10 @@ import kotlinx.serialization.Serializable
 data class HealthResponse(
     val status: String,
     val projectName: String,
+    val providerMode: String,
 )
 
-fun Application.configureHealthRoutes() {
+fun Application.configureHealthRoutes(providerMode: String) {
     routing {
         get("/health") {
             call.respond(
@@ -21,6 +22,7 @@ fun Application.configureHealthRoutes() {
                 message = HealthResponse(
                     status = "ok",
                     projectName = "CarVoice Cockpit Agent",
+                    providerMode = providerMode,
                 ),
             )
         }

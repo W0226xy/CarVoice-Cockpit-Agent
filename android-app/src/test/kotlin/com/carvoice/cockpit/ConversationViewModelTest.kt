@@ -1,107 +1,298 @@
 package com.carvoice.cockpit
 
-import com.carvoice.cockpit.model.QuickActionType
+import com.carvoice.cockpit.data.ConversationRepository
+import com.carvoice.cockpit.data.ConversationStreamEvent
+import com.carvoice.cockpit.model.ConnectionState
+import com.carvoice.cockpit.model.MessageAuthor
 import com.carvoice.cockpit.model.WorkspaceDestination
-import com.carvoice.cockpit.model.dashboardQuickActions
 import com.carvoice.cockpit.ui.conversation.ConversationViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ConversationViewModelTest {
     @Test
-    fun sendMessageAppendsUserMessageAndLocalReply() = runBlocking {
-        val viewModel = ConversationViewModel()
+    fun `deltas append to one assistant message and completion unlocks input`() = runBlocking {
+        val repository = FakeConversationRepository()
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default)
+        delay(50)
         viewModel.startNewConversation()
-
-        viewModel.updateInput("你好，座舱")
+        viewModel.updateInput("你好")
         viewModel.sendMessage()
+        delay(50)
+        val request = repository.sent.single()
 
-        assertEquals("你好，座舱", viewModel.uiState.value.messages.single().content)
+        repository.emit(
+            ConversationStreamEvent.AssistantDelta(
+                request.requestId,
+                request.conversationId,
+                "你",
+            ),
+        )
+        repository.emit(
+            ConversationStreamEvent.AssistantDelta(
+                request.requestId,
+                request.conversationId,
+                "好",
+            ),
+        )
+        delay(50)
+
+        assertEquals("你好", viewModel.uiState.value.messages.last().content)
+        assertEquals(
+            1,
+            viewModel.uiState.value.messages.count { it.author == MessageAuthor.AGENT },
+        )
         assertTrue(viewModel.uiState.value.isAssistantResponding)
 
-        delay(900)
-
-        val state = viewModel.uiState.value
-        assertEquals(
-            "当前为界面演示模式，Agent 服务将在下一阶段接入。",
-            state.messages.last().content,
+        repository.emit(
+            ConversationStreamEvent.AssistantCompleted(
+                request.requestId,
+                request.conversationId,
+            ),
         )
-        assertEquals("", state.inputText)
-        assertFalse(state.isAssistantResponding)
+        delay(50)
+        assertFalse(viewModel.uiState.value.isAssistantResponding)
     }
 
     @Test
-    fun airConditionerActionRequiresLocalConfirmation() {
-        val viewModel = ConversationViewModel()
+    fun `error stops generation and exposes retry`() = runBlocking {
+        val repository = FakeConversationRepository()
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default)
+        delay(50)
         viewModel.startNewConversation()
-        val action = dashboardQuickActions.first {
-            it.type == QuickActionType.AIR_CONDITIONER
-        }
+        viewModel.updateInput("测试错误")
+        viewModel.sendMessage()
+        delay(50)
+        val request = repository.sent.single()
 
-        viewModel.prepareQuickAction(action)
-
-        assertEquals(action.demoPrompt, viewModel.uiState.value.inputText)
-        assertEquals("将空调设置为 24 ℃", viewModel.uiState.value.pendingVehicleAction?.description)
-
-        viewModel.confirmVehicleAction()
-
-        val state = viewModel.uiState.value
-        assertNull(state.pendingVehicleAction)
-        assertTrue(state.messages.last().content.contains("未执行车辆操作"))
-    }
-
-    @Test
-    fun newConversationCreatesAndSelectsEmptySession() {
-        val viewModel = ConversationViewModel()
-        val previousSessionCount = viewModel.uiState.value.sessions.size
-        viewModel.updateInput("临时内容")
-        viewModel.prepareQuickAction(
-            dashboardQuickActions.first { it.type == QuickActionType.AIR_CONDITIONER },
+        repository.emit(
+            ConversationStreamEvent.Error(
+                requestId = request.requestId,
+                conversationId = request.conversationId,
+                code = "MODEL_ERROR",
+                message = "模型暂时不可用",
+                retryable = true,
+            ),
         )
+        delay(50)
+
+        assertFalse(viewModel.uiState.value.isAssistantResponding)
+        assertEquals("模型暂时不可用", viewModel.uiState.value.error?.message)
+        assertTrue(viewModel.uiState.value.error?.retryable == true)
+    }
+
+    @Test
+    fun `generation prevents duplicate sends`() = runBlocking {
+        val repository = FakeConversationRepository()
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default)
+        delay(50)
+        viewModel.startNewConversation()
+        viewModel.updateInput("第一条")
+        viewModel.sendMessage()
+        viewModel.updateInput("第二条")
+        viewModel.sendMessage()
+        delay(50)
+
+        assertEquals(1, repository.sent.size)
+    }
+
+    @Test
+    fun `new conversation creates a new conversation id`() {
+        val repository = FakeConversationRepository()
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default)
+        val previousId = viewModel.uiState.value.activeSessionId
 
         viewModel.startNewConversation()
 
-        val state = viewModel.uiState.value
-        assertEquals(previousSessionCount + 1, state.sessions.size)
-        assertEquals("新会话", state.activeSession?.title)
-        assertTrue(state.messages.isEmpty())
-        assertEquals("", state.inputText)
-        assertNull(state.pendingVehicleAction)
-        assertFalse(state.isAssistantResponding)
+        assertNotEquals(previousId, viewModel.uiState.value.activeSessionId)
+        assertTrue(viewModel.uiState.value.messages.isEmpty())
+        assertTrue(viewModel.uiState.value.historyItems.isEmpty())
+        assertEquals("新对话", viewModel.uiState.value.activeSession?.title)
     }
 
     @Test
-    fun selectingHistoryChangesActiveConversation() {
-        val viewModel = ConversationViewModel()
-        val targetSession = viewModel.uiState.value.sessions[1]
+    fun `first message promotes new conversation into history with local title`() = runBlocking {
+        val repository = FakeConversationRepository()
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default)
+        delay(50)
+        val input = "  帮我规划周末去上海迪士尼的路线和停车建议  "
+        viewModel.updateInput(input)
+        viewModel.sendMessage()
+        delay(50)
 
-        viewModel.selectConversation(targetSession.id)
-
-        val state = viewModel.uiState.value
-        assertEquals(targetSession.id, state.activeSessionId)
-        assertEquals(targetSession.messages, state.messages)
-        assertEquals(WorkspaceDestination.CONVERSATION, state.destination)
+        val history = viewModel.uiState.value.historyItems.single()
+        assertEquals("帮我规划周末去上海迪士尼的路线和停车…", history.title)
+        assertEquals(input.trim(), history.summary)
     }
 
     @Test
-    fun knowledgeBaseCanOpenAndReturnToConversation() {
-        val viewModel = ConversationViewModel()
+    fun `selecting a history conversation restores its messages`() = runBlocking {
+        val repository = FakeConversationRepository()
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default)
+        delay(50)
+        viewModel.updateInput("第一段对话")
+        viewModel.sendMessage()
+        delay(50)
+        val firstId = repository.sent.single().conversationId
+        repository.emit(ConversationStreamEvent.AssistantCompleted(repository.sent.single().requestId, firstId))
+        delay(50)
+        viewModel.startNewConversation()
+        viewModel.updateInput("第二段对话")
+        viewModel.sendMessage()
+        delay(50)
+
+        viewModel.selectConversation(firstId)
+
+        assertEquals(firstId, viewModel.uiState.value.activeSessionId)
+        assertEquals("第一段对话", viewModel.uiState.value.messages.single().content)
+    }
+
+    @Test
+    fun `deleting a non active conversation keeps the current conversation`() = runBlocking {
+        val repository = FakeConversationRepository()
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default)
+        delay(50)
+        viewModel.updateInput("保留的对话")
+        viewModel.sendMessage()
+        delay(50)
+        val retainedId = repository.sent.single().conversationId
+        repository.emit(ConversationStreamEvent.AssistantCompleted(repository.sent.single().requestId, retainedId))
+        delay(50)
+        viewModel.startNewConversation()
+        viewModel.updateInput("待删除的对话")
+        viewModel.sendMessage()
+        delay(50)
+        val deletedId = repository.sent.last().conversationId
+        repository.emit(ConversationStreamEvent.AssistantCompleted(repository.sent.last().requestId, deletedId))
+        delay(50)
+        viewModel.selectConversation(retainedId)
+
+        viewModel.requestDeleteConversation(deletedId)
+        viewModel.confirmDeleteConversation()
+
+        assertEquals(retainedId, viewModel.uiState.value.activeSessionId)
+        assertTrue(viewModel.uiState.value.sessions.none { it.id == deletedId })
+    }
+
+    @Test
+    fun `deleting current conversation switches to most recent remaining conversation`() = runBlocking {
+        val repository = FakeConversationRepository()
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default)
+        delay(50)
+        viewModel.updateInput("较早对话")
+        viewModel.sendMessage()
+        delay(50)
+        val firstId = repository.sent.single().conversationId
+        repository.emit(ConversationStreamEvent.AssistantCompleted(repository.sent.single().requestId, firstId))
+        delay(50)
+        viewModel.startNewConversation()
+        viewModel.updateInput("较新对话")
+        viewModel.sendMessage()
+        delay(50)
+        val activeId = repository.sent.last().conversationId
+        repository.emit(ConversationStreamEvent.AssistantCompleted(repository.sent.last().requestId, activeId))
+        delay(50)
+
+        viewModel.requestDeleteConversation(activeId)
+        viewModel.confirmDeleteConversation()
+
+        assertEquals(firstId, viewModel.uiState.value.activeSessionId)
+        assertTrue(viewModel.uiState.value.sessions.none { it.id == activeId })
+    }
+
+    @Test
+    fun `cancel deletion leaves a history conversation unchanged`() = runBlocking {
+        val repository = FakeConversationRepository()
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default)
+        delay(50)
+        viewModel.updateInput("保留记录")
+        viewModel.sendMessage()
+        delay(50)
+        val conversationId = repository.sent.single().conversationId
+
+        viewModel.requestDeleteConversation(conversationId)
+        assertEquals(conversationId, viewModel.uiState.value.deleteTargetConversationId)
+        viewModel.cancelDeleteConversation()
+
+        assertNull(viewModel.uiState.value.deleteTargetConversationId)
+        assertTrue(viewModel.uiState.value.sessions.any { it.id == conversationId })
+    }
+
+    @Test
+    fun `late delta for a deleted conversation is ignored`() = runBlocking {
+        val repository = FakeConversationRepository()
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default)
+        delay(50)
+        viewModel.updateInput("生成中的会话")
+        viewModel.sendMessage()
+        delay(50)
+        val request = repository.sent.single()
+
+        viewModel.requestDeleteConversation(request.conversationId)
+        viewModel.confirmDeleteConversation()
+        repository.emit(
+            ConversationStreamEvent.AssistantDelta(
+                request.requestId,
+                request.conversationId,
+                "不应显示的延迟分片",
+            ),
+        )
+        delay(50)
+
+        assertTrue(viewModel.uiState.value.messages.isEmpty())
+        assertTrue(viewModel.uiState.value.sessions.none { it.id == request.conversationId })
+    }
+
+    @Test
+    fun `knowledge navigation remains local`() {
+        val repository = FakeConversationRepository()
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default)
 
         viewModel.openKnowledgeBase()
-        assertEquals(
-            WorkspaceDestination.KNOWLEDGE_BASE,
-            viewModel.uiState.value.destination,
-        )
-
+        assertEquals(WorkspaceDestination.KNOWLEDGE_BASE, viewModel.uiState.value.destination)
         viewModel.returnToConversation()
-        assertEquals(
-            WorkspaceDestination.CONVERSATION,
-            viewModel.uiState.value.destination,
-        )
+        assertEquals(WorkspaceDestination.CONVERSATION, viewModel.uiState.value.destination)
+        assertNotNull(viewModel.uiState.value.activeSession)
     }
+}
+
+private class FakeConversationRepository : ConversationRepository {
+    data class SentMessage(
+        val conversationId: String,
+        val requestId: String,
+        val message: String,
+    )
+
+    override val connectionState = MutableStateFlow(ConnectionState.CONNECTED)
+    private val eventFlow = MutableSharedFlow<ConversationStreamEvent>(extraBufferCapacity = 16)
+    override val events: Flow<ConversationStreamEvent> = eventFlow
+    val sent = mutableListOf<SentMessage>()
+
+    override fun connect() = Unit
+
+    override suspend fun sendMessage(
+        conversationId: String,
+        requestId: String,
+        message: String,
+    ): Result<Unit> {
+        sent += SentMessage(conversationId, requestId, message)
+        return Result.success(Unit)
+    }
+
+    suspend fun emit(event: ConversationStreamEvent) {
+        eventFlow.emit(event)
+    }
+
+    override fun close() = Unit
 }

@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-已完成第 1 阶段“项目准备与需求定义”和第 2 阶段“车机端基础界面”：
+已完成项目准备、车机端基础界面和第 3 阶段流式对话闭环：
 
 - 可构建的 Jetpack Compose 占位应用；
 - 带 `GET /health` 的 Ktor 服务；
@@ -15,16 +15,18 @@
 - 连接状态、建议指令、思考动画、消息气泡、内嵌工具状态和车辆操作确认组件；
 - 桌面式会话侧栏、本地历史切换和知识库管理占位页面；
 - 基于 `StateFlow` 的本地 UI 状态与可替换的会话仓储接口。
+- Android 与 Ktor 之间的 `/ws/chat` WebSocket 通信和统一事件协议；
+- Koog 0.5.4 OpenAI-compatible 流式模型适配器及无密钥 Mock 模式。
 
-当前对话和车辆确认仅为本地 UI 演示，不包含 WebSocket、Koog、真实或模拟车控逻辑、语音、RAG、数据库和缓存服务。项目禁止连接 Vehicle HAL、CAN 总线及任何真实车辆设备。
+当前不包含 Tool Registry、真实或模拟车控逻辑、语音、RAG、数据库、缓存和鉴权。项目禁止连接 Vehicle HAL、CAN 总线及任何真实车辆设备。
 
 ## 技术栈
 
 | 范围 | 技术 |
 | --- | --- |
 | 车机端 | Kotlin、Android SDK、Jetpack Compose、MVVM（后续引入） |
-| Agent 服务端 | Kotlin、Ktor、Coroutines、Koog（后续引入） |
-| 协议 | Kotlin Serialization；后续使用 WebSocket |
+| Agent 服务端 | Kotlin、Ktor、Coroutines、Koog 0.5.4 |
+| 协议 | WebSocket、Kotlin Serialization、共享事件模型 |
 | 数据 | PostgreSQL、pgvector、Redis（仅预留） |
 | 编排 | Docker Compose（仅预留） |
 
@@ -60,20 +62,32 @@ adb shell am start -n com.carvoice.cockpit/.MainActivity
 
 ## 启动 Agent 服务
 
+Mock 模式无需 API Key：
+
 ```bash
+LLM_PROVIDER=mock SERVER_PORT=8081 ./gradlew :agent-server:run
+```
+
+OpenAI-compatible 模式通过 Koog 调用模型：
+
+```bash
+cp .env.example .env
+# 编辑 .env：填写真实的 API Key、模型名与服务商域名（不加 /v1）
 ./gradlew :agent-server:run
 ```
 
-默认监听 `0.0.0.0:8080`。可通过 `SERVER_HOST` 和 `SERVER_PORT` 修改。健康检查：
+服务启动时会读取当前目录的 `.env`，但操作系统环境变量优先，可用于容器和 CI。不要把真实 `OPENAI_API_KEY` 写入命令历史、README 或仓库；应由本地环境或密钥管理系统注入。
+
+默认监听 `0.0.0.0:8081`。可通过 `SERVER_HOST` 和 `SERVER_PORT` 修改。健康检查：
 
 ```bash
-curl http://localhost:8080/health
+curl http://localhost:8081/health
 ```
 
 预期响应：
 
 ```json
-{"status":"ok","projectName":"CarVoice Cockpit Agent"}
+{"status":"ok","projectName":"CarVoice Cockpit Agent","providerMode":"mock"}
 ```
 
 运行全部单元测试：
@@ -85,8 +99,8 @@ curl http://localhost:8080/health
 ## 开发阶段
 
 1. **车机端基础界面（已完成）**：建立 MVVM、会话页、状态栏和连接状态组件。
-2. **实时通信**：实现 WebSocket、事件分发、断线重连和协议兼容检查。
-3. **Agent 编排**：接入经过版本验证的 Koog，完成上下文与工具选择流程。
+2. **实时通信（已完成基础闭环）**：实现 WebSocket、事件分发和错误状态。
+3. **Agent 流式回复（已完成）**：接入 Koog 与 OpenAI-compatible 模型，支持 Mock 演示。
 4. **模拟座舱工具**：实现 `MockVehicleTool`、导航/媒体模拟器、确认与审计链路。
 5. **语音交互**：接入可替换的 ASR/TTS 适配层，完善打断和生命周期管理。
 6. **车辆知识问答**：接入 PostgreSQL、pgvector、Redis 和可追溯的 RAG。

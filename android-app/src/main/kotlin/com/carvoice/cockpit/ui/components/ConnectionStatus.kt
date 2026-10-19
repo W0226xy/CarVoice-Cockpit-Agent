@@ -32,6 +32,7 @@ fun ConnectionStatus(
         ConnectionState.CONNECTED -> CockpitSuccess
         ConnectionState.CONNECTING -> CockpitWarning
         ConnectionState.DISCONNECTED -> CockpitDanger
+        ConnectionState.FAILED -> CockpitDanger
     }
 
     Surface(

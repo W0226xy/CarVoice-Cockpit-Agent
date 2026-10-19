@@ -37,19 +37,22 @@ fun ConversationScreen(
     onSend: () -> Unit,
     onCancelVehicleAction: () -> Unit,
     onConfirmVehicleAction: () -> Unit,
+    onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
     val hasConversationContent = state.messages.isNotEmpty() ||
         state.toolExecution != null ||
         state.pendingVehicleAction != null ||
-        state.isAssistantResponding
+        state.isAssistantResponding ||
+        state.error != null
 
     LaunchedEffect(
         state.messages.size,
         state.toolExecution,
         state.pendingVehicleAction,
         state.isAssistantResponding,
+        state.error,
     ) {
         if (hasConversationContent) {
             delay(50)
@@ -60,7 +63,7 @@ fun ConversationScreen(
 
     Column(modifier = modifier.fillMaxSize()) {
         ConversationTopBar(
-            title = state.activeSession?.title ?: "新会话",
+            title = state.activeSession?.title ?: "新对话",
             connectionState = state.connectionState,
             onOpenSidebar = onOpenSidebar,
         )
@@ -98,6 +101,15 @@ fun ConversationScreen(
                             ThinkingIndicator()
                         }
                     }
+                    state.error?.let { error ->
+                        item(key = "conversation-error") {
+                            ConversationErrorMessage(
+                                error = error,
+                                onRetry = onRetry,
+                                modifier = Modifier.padding(start = 52.dp),
+                            )
+                        }
+                    }
                     state.pendingVehicleAction?.let { action ->
                         item(key = "vehicle-confirmation") {
                             VehicleActionConfirm(
@@ -133,7 +145,7 @@ fun ConversationScreen(
                 isReplying = state.isAssistantResponding,
             )
             Text(
-                text = "当前为本地界面演示，不会连接服务或执行车辆操作",
+                text = "Agent 回复由服务端流式生成；车辆工具尚未接入",
                 modifier = Modifier.align(Alignment.CenterHorizontally),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium,
@@ -175,7 +187,7 @@ private fun EmptyConversationScreenPreview() {
                 sessions = listOf(
                     com.carvoice.cockpit.model.ConversationSession(
                         id = "preview-empty",
-                        title = "新会话",
+                        title = "新对话",
                         updatedAtLabel = "刚刚",
                         messages = emptyList(),
                     ),
@@ -188,6 +200,7 @@ private fun EmptyConversationScreenPreview() {
             onSend = {},
             onCancelVehicleAction = {},
             onConfirmVehicleAction = {},
+            onRetry = {},
         )
     }
 }
@@ -222,6 +235,7 @@ private fun ConversationScreenPreview() {
             onSend = {},
             onCancelVehicleAction = {},
             onConfirmVehicleAction = {},
+            onRetry = {},
         )
     }
 }

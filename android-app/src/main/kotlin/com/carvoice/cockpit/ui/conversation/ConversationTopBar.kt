@@ -67,7 +67,7 @@ fun ConversationTopBar(
 private fun ConversationTopBarPreview() {
     CarVoiceCockpitTheme {
         ConversationTopBar(
-            title = "今日出行助手",
+            title = "新对话",
             connectionState = ConnectionState.DISCONNECTED,
             onOpenSidebar = null,
         )

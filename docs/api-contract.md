@@ -6,13 +6,49 @@ WebSocket 事件后续统一使用以下信封：
 
 ```json
 {
-  "type": "chat.request",
-  "protocolVersion": "1.0",
+  "type": "chat_request",
+  "requestId": "req-20261019-001",
+  "conversationId": "conversation-001",
   "payload": {}
 }
 ```
 
-`type` 用于事件分发，`payload` 使用下列结构。服务端必须保留未知字段兼容能力，但不能忽略未知的事件类型或风险字段。
+`type` 用于事件分发，`payload` 使用下列结构。`SocketEvent` 及所有 payload 均以 `shared-contracts` 为唯一代码来源。
+
+## WebSocket 事件
+
+| 方向 | `type` | 用途 |
+| --- | --- | --- |
+| Android → 服务端 | `chat_request` | 发送用户文本 |
+| 服务端 → Android | `connection_ready` | 连接和 Provider 模式就绪 |
+| 服务端 → Android | `assistant_delta` | Assistant 增量文本 |
+| 服务端 → Android | `assistant_completed` | 当前回复结束 |
+| 服务端 → Android | `error` | 参数、协议、连接或模型错误 |
+| 预留 | `tool_progress` | 后续工具执行进度，本阶段不发送 |
+
+`chat_request` 的 payload：
+
+```json
+{"message":"你好"}
+```
+
+`assistant_delta` 的 payload：
+
+```json
+{"text":"你好，"}
+```
+
+`error` 的 payload：
+
+```json
+{
+  "code": "MODEL_ERROR",
+  "message": "模型服务暂时不可用，请稍后重试。",
+  "retryable": true
+}
+```
+
+服务端拒绝空消息和超过 4000 字符的消息。非法 JSON、未知事件及模型失败均返回安全错误，不包含堆栈、密钥、环境变量或完整模型地址。
 
 ## ChatRequest
 

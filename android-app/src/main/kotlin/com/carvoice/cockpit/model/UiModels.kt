@@ -4,6 +4,7 @@ enum class ConnectionState(val label: String) {
     CONNECTED("服务已连接"),
     CONNECTING("正在连接"),
     DISCONNECTED("服务未连接"),
+    FAILED("连接失败"),
 }
 
 enum class MessageAuthor {
@@ -34,6 +35,11 @@ data class VehicleActionUi(
     val riskMessage: String,
 )
 
+data class ConversationErrorUi(
+    val message: String,
+    val retryable: Boolean,
+)
+
 enum class WorkspaceDestination {
     CONVERSATION,
     KNOWLEDGE_BASE,
@@ -44,7 +50,10 @@ data class ConversationSession(
     val title: String,
     val updatedAtLabel: String,
     val messages: List<ChatMessage>,
-)
+){
+    val hasUserMessage: Boolean
+        get() = messages.any { it.author == MessageAuthor.USER }
+}
 
 data class ChatHistoryItem(
     val sessionId: String,
@@ -56,7 +65,7 @@ data class ChatHistoryItem(
 fun ConversationSession.toHistoryItem() = ChatHistoryItem(
     sessionId = id,
     title = title,
-    summary = messages.lastOrNull()?.content ?: "暂无消息",
+    summary = messages.lastOrNull()?.content.orEmpty(),
     updatedAtLabel = updatedAtLabel,
 )
 
@@ -111,60 +120,6 @@ val dashboardQuickActions = listOf(
         description = "继续播放车载音乐",
         marker = "媒体",
         demoPrompt = "播放音乐",
-    ),
-)
-
-val mockConversationSessions = listOf(
-    ConversationSession(
-        id = "session-today",
-        title = "今日出行助手",
-        updatedAtLabel = "14:18",
-        messages = listOf(
-            ChatMessage(
-                id = 1,
-                author = MessageAuthor.USER,
-                content = "帮我看看今天出发前需要注意什么？",
-            ),
-            ChatMessage(
-                id = 2,
-                author = MessageAuthor.AGENT,
-                content = "当前为本地演示：车辆续航充足，胎压正常。出发前可以确认空调和导航目的地。",
-            ),
-        ),
-    ),
-    ConversationSession(
-        id = "session-climate",
-        title = "座舱温度设置",
-        updatedAtLabel = "昨天",
-        messages = listOf(
-            ChatMessage(
-                id = 3,
-                author = MessageAuthor.USER,
-                content = "车内有点热，帮我设置到 24 ℃。",
-            ),
-            ChatMessage(
-                id = 4,
-                author = MessageAuthor.AGENT,
-                content = "这是历史演示会话，没有执行真实车辆操作。",
-            ),
-        ),
-    ),
-    ConversationSession(
-        id = "session-trip",
-        title = "导航与音乐",
-        updatedAtLabel = "周六",
-        messages = listOf(
-            ChatMessage(
-                id = 5,
-                author = MessageAuthor.USER,
-                content = "导航回家，再播放一些轻音乐。",
-            ),
-            ChatMessage(
-                id = 6,
-                author = MessageAuthor.AGENT,
-                content = "已记录演示指令，导航和媒体服务将在后续阶段接入。",
-            ),
-        ),
     ),
 )
 
