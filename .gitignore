@@ -18,7 +18,7 @@ gradle/gradle-daemon-jvm.properties
 *.pem
 *.key
 
-data/
+/data/
 db-data/
 postgres-data/
 redis-data/
