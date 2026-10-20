@@ -29,6 +29,7 @@ fun ToolExecutionCard(
     val statusColor = when (state.state) {
         ToolExecutionState.RUNNING -> CockpitWarning
         ToolExecutionState.COMPLETED -> CockpitSuccess
+        ToolExecutionState.FAILED -> MaterialTheme.colorScheme.error
     }
     Surface(
         modifier = modifier
@@ -45,7 +46,11 @@ fun ToolExecutionCard(
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(text = state.title, style = MaterialTheme.typography.titleMedium)
                 Text(
-                    text = "模拟座舱 · 服务端内存态",
+                    text = if (state.title == "联网搜索") {
+                        "Tavily MCP · 外部来源"
+                    } else {
+                        "模拟座舱 · 服务端内存态"
+                    },
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodyMedium,
                 )

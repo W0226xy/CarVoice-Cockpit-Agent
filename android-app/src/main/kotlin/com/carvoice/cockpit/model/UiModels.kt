@@ -16,11 +16,29 @@ data class ChatMessage(
     val id: Long,
     val author: MessageAuthor,
     val content: String,
+    val serverMessageId: String? = null,
+    val searchQuery: String? = null,
+    val sources: List<WebSearchSourceUi> = emptyList(),
+)
+
+data class WebSearchSourceUi(
+    val index: Int,
+    val title: String,
+    val url: String,
+    val domain: String,
+    val snippet: String,
+    val publishedAt: String? = null,
+)
+
+data class WebSearchSourcesUi(
+    val query: String,
+    val sources: List<WebSearchSourceUi>,
 )
 
 enum class ToolExecutionState {
     RUNNING,
     COMPLETED,
+    FAILED,
 }
 
 data class ToolExecutionUiState(

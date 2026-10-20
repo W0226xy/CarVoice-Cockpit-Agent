@@ -13,6 +13,7 @@ object SocketEventType {
     const val CONTROL_CONFIRMATION_REQUIRED = "control_confirmation_required"
     const val CONTROL_CONFIRMATION_RESPONSE = "control_confirmation_response"
     const val SIMULATED_COCKPIT_STATE = "simulated_cockpit_state"
+    const val WEB_SEARCH_SOURCES = "web_search_sources"
 }
 
 object ChatProtocol {
@@ -83,4 +84,22 @@ data class SimulatedCockpitStatePayload(
     val frontDefrostEnabled: Boolean = false,
     val driverWindowPercent: Int = 0,
     val passengerWindowPercent: Int = 0,
+)
+
+@Serializable
+data class WebSearchSourcesPayload(
+    val conversationId: String,
+    val messageId: String,
+    val query: String,
+    val sources: List<WebSearchSourcePayload>,
+)
+
+@Serializable
+data class WebSearchSourcePayload(
+    val index: Int,
+    val title: String,
+    val url: String,
+    val domain: String,
+    val snippet: String,
+    val publishedAt: String? = null,
 )

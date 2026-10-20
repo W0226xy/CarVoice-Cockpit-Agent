@@ -21,9 +21,53 @@ class LlmConfigTest {
     }
 
     @Test
-    fun `openai-compatible mode requires all model settings`() {
-        assertFailsWith<IllegalStateException> {
-            LlmConfig.fromEnvironment(mapOf("LLM_PROVIDER" to "openai_compatible"))
+    fun `openai-compatible mode is the default and still requires configuration`() {
+        val error = assertFailsWith<IllegalStateException> {
+            LlmConfig.fromEnvironment(emptyMap())
+        }
+
+        assertEquals(
+            "OPENAI_BASE_URL is required for OpenAI-compatible LLM configuration",
+            error.message,
+        )
+    }
+
+    @Test
+    fun `mock provider is rejected`() {
+        val error = assertFailsWith<IllegalStateException> {
+            LlmConfig.fromEnvironment(mapOf("LLM_PROVIDER" to "mock"))
+        }
+
+        assertEquals(
+            "LLM_PROVIDER must be openai_compatible; Mock LLM is not supported",
+            error.message,
+        )
+    }
+
+    @Test
+    fun `openai-compatible mode rejects every missing or blank model setting`() {
+        val complete = mapOf(
+            "LLM_PROVIDER" to "openai_compatible",
+            "OPENAI_BASE_URL" to "https://provider.example",
+            "OPENAI_API_KEY" to "test-key",
+            "OPENAI_MODEL" to "test-model",
+        )
+        listOf("OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODEL").forEach { name ->
+            val missing = assertFailsWith<IllegalStateException> {
+                LlmConfig.fromEnvironment(complete - name)
+            }
+            assertEquals(
+                "$name is required for OpenAI-compatible LLM configuration",
+                missing.message,
+            )
+
+            val blank = assertFailsWith<IllegalStateException> {
+                LlmConfig.fromEnvironment(complete + (name to "  "))
+            }
+            assertEquals(
+                "$name is required for OpenAI-compatible LLM configuration",
+                blank.message,
+            )
         }
     }
 

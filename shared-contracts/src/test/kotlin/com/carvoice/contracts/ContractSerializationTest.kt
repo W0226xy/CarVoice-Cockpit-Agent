@@ -87,4 +87,33 @@ class ContractSerializationTest {
             Json.decodeFromString<SimulatedCockpitStatePayload>(Json.encodeToString(state)),
         )
     }
+
+    @Test
+    fun `web search sources event round trips and unknown event stays compatible`() {
+        val payload = WebSearchSourcesPayload(
+            conversationId = "conversation-1",
+            messageId = "request-1",
+            query = "AI 新闻",
+            sources = listOf(
+                WebSearchSourcePayload(
+                    1,
+                    "来源标题",
+                    "https://example.com/news",
+                    "example.com",
+                    "摘要",
+                    "2026-10-20",
+                ),
+            ),
+        )
+        assertEquals(
+            payload,
+            Json.decodeFromString<WebSearchSourcesPayload>(Json.encodeToString(payload)),
+        )
+
+        val unknown = SocketEvent(type = "future_event")
+        assertEquals(
+            "future_event",
+            Json.decodeFromString<SocketEvent>(Json.encodeToString(unknown)).type,
+        )
+    }
 }

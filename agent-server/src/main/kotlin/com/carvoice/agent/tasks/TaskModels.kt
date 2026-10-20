@@ -5,6 +5,8 @@ import com.carvoice.contracts.ControlConfirmationRequiredPayload
 import com.carvoice.contracts.IntentResult
 import com.carvoice.contracts.SimulatedCockpitStatePayload
 import kotlinx.coroutines.flow.Flow
+import com.carvoice.contracts.ToolCallStatus
+import com.carvoice.contracts.WebSearchSourcesPayload
 
 data class TaskContext(
     val requestId: String,
@@ -15,7 +17,7 @@ data class TaskContext(
 )
 
 sealed interface TaskResult {
-    data class Streaming(val chunks: Flow<String>) : TaskResult
+    data class Streaming(val events: Flow<TaskStreamEvent>) : TaskResult
     data class Reply(val text: String) : TaskResult
     data class Confirmation(
         val text: String,
@@ -28,6 +30,17 @@ sealed interface TaskResult {
         val cancelled: Boolean = false,
     ) : TaskResult
     data class Failure(val code: String, val message: String) : TaskResult
+}
+
+sealed interface TaskStreamEvent {
+    data class Delta(val text: String) : TaskStreamEvent
+    data class ToolProgress(
+        val callId: String,
+        val toolName: String,
+        val status: ToolCallStatus,
+        val message: String,
+    ) : TaskStreamEvent
+    data class SearchSources(val payload: WebSearchSourcesPayload) : TaskStreamEvent
 }
 
 interface TaskModule {

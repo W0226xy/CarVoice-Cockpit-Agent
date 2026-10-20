@@ -21,6 +21,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carvoice.cockpit.BuildConfig
 import com.carvoice.cockpit.data.AgentConnection
@@ -40,7 +41,12 @@ import kotlinx.coroutines.launch
 fun CarVoiceApp(
     modifier: Modifier = Modifier,
     conversationViewModel: ConversationViewModel? = null,
+    externalLinkOpener: ExternalLinkOpener? = null,
 ) {
+    val context = LocalContext.current
+    val resolvedLinkOpener = remember(externalLinkOpener, context) {
+        externalLinkOpener ?: AndroidExternalLinkOpener(context)
+    }
     val defaultFactory = remember {
         ConversationViewModelFactory(
             WebSocketConversationRepository(
@@ -104,6 +110,7 @@ fun CarVoiceApp(
                             state = conversationState,
                             viewModel = resolvedViewModel,
                             onOpenSidebar = null,
+                            onOpenSource = resolvedLinkOpener::open,
                         )
                     }
                 }
@@ -131,6 +138,7 @@ fun CarVoiceApp(
                         state = conversationState,
                         viewModel = resolvedViewModel,
                         onOpenSidebar = { scope.launch { drawerState.open() } },
+                        onOpenSource = resolvedLinkOpener::open,
                     )
                 }
             }
@@ -149,6 +157,7 @@ private fun WorkspaceContent(
     state: ConversationUiState,
     viewModel: ConversationViewModel,
     onOpenSidebar: (() -> Unit)?,
+    onOpenSource: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     when (state.destination) {
@@ -161,6 +170,7 @@ private fun WorkspaceContent(
             onCancelVehicleAction = viewModel::cancelVehicleAction,
             onConfirmVehicleAction = viewModel::confirmVehicleAction,
             onRetry = viewModel::retry,
+            onOpenSource = onOpenSource,
             modifier = modifier.fillMaxSize(),
         )
 

@@ -4,8 +4,11 @@ import com.carvoice.cockpit.data.ConversationRepository
 import com.carvoice.cockpit.data.ConversationStreamEvent
 import com.carvoice.cockpit.model.ConnectionState
 import com.carvoice.cockpit.model.MessageAuthor
+import com.carvoice.cockpit.model.ToolExecutionState
 import com.carvoice.cockpit.model.WorkspaceDestination
 import com.carvoice.contracts.SimulatedCockpitStatePayload
+import com.carvoice.contracts.ToolCallStatus
+import com.carvoice.contracts.WebSearchSourcePayload
 import com.carvoice.cockpit.ui.conversation.ConversationViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -366,6 +369,143 @@ class ConversationViewModelTest {
 
         assertNull(viewModel.uiState.value.pendingVehicleAction)
         assertEquals("确认请求无效", viewModel.uiState.value.error?.message)
+    }
+
+    @Test
+    fun `search progress and sources bind to the streamed assistant message`() = runBlocking {
+        val repository = FakeConversationRepository()
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default)
+        delay(50)
+        viewModel.updateInput("最近有什么 AI 新闻")
+        viewModel.sendMessage()
+        delay(50)
+        val request = repository.sent.single()
+
+        repository.emit(
+            ConversationStreamEvent.ToolProgress(
+                request.requestId,
+                request.conversationId,
+                "search-call",
+                "tavily_web_search",
+                ToolCallStatus.RUNNING,
+                "正在联网搜索",
+            ),
+        )
+        repository.emit(
+            ConversationStreamEvent.WebSearchSources(
+                request.requestId,
+                request.conversationId,
+                request.requestId,
+                "AI 新闻",
+                listOf(
+                    WebSearchSourcePayload(
+                        1,
+                        "来源标题",
+                        "https://example.com/news",
+                        "example.com",
+                        "来源摘要",
+                    ),
+                ),
+            ),
+        )
+        repository.emit(
+            ConversationStreamEvent.AssistantDelta(
+                request.requestId,
+                request.conversationId,
+                "带来源回答[1]",
+            ),
+        )
+        delay(50)
+
+        assertEquals("联网搜索", viewModel.uiState.value.toolExecution?.title)
+        assertEquals("正在联网搜索", viewModel.uiState.value.toolExecution?.detail)
+        val assistant = viewModel.uiState.value.messages.last()
+        assertEquals(request.requestId, assistant.serverMessageId)
+        assertEquals("AI 新闻", assistant.searchQuery)
+        assertEquals("来源标题", assistant.sources.single().title)
+    }
+
+    @Test
+    fun `search failure remains one assistant message and exposes failed status`() = runBlocking {
+        val repository = FakeConversationRepository()
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default)
+        delay(50)
+        viewModel.updateInput("扬州今天会下雨吗")
+        viewModel.sendMessage()
+        delay(50)
+        val request = repository.sent.single()
+
+        repository.emit(
+            ConversationStreamEvent.ToolProgress(
+                request.requestId,
+                request.conversationId,
+                "search-call",
+                "tavily_web_search",
+                ToolCallStatus.FAILED,
+                "联网搜索超时，已切换为普通回答",
+            ),
+        )
+        repository.emit(
+            ConversationStreamEvent.AssistantDelta(
+                request.requestId,
+                request.conversationId,
+                "联网搜索暂时不可用。普通回答",
+            ),
+        )
+        delay(50)
+
+        assertEquals(ToolExecutionState.FAILED, viewModel.uiState.value.toolExecution?.state)
+        assertEquals(
+            1,
+            viewModel.uiState.value.messages.count { it.author == MessageAuthor.AGENT },
+        )
+        assertTrue(viewModel.uiState.value.messages.last().sources.isEmpty())
+    }
+
+    @Test
+    fun `disconnect clears pending search and tool state`() = runBlocking {
+        val repository = FakeConversationRepository()
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default)
+        delay(50)
+        viewModel.updateInput("搜索新闻")
+        viewModel.sendMessage()
+        delay(50)
+        val request = repository.sent.single()
+        repository.emit(
+            ConversationStreamEvent.ToolProgress(
+                request.requestId,
+                request.conversationId,
+                "search-call",
+                "tavily_web_search",
+                ToolCallStatus.RUNNING,
+                "正在联网搜索",
+            ),
+        )
+        repository.emit(
+            ConversationStreamEvent.WebSearchSources(
+                request.requestId,
+                request.conversationId,
+                request.requestId,
+                "query",
+                listOf(
+                    WebSearchSourcePayload(
+                        1,
+                        "source",
+                        "https://example.com",
+                        "example.com",
+                        "snippet",
+                    ),
+                ),
+            ),
+        )
+        delay(50)
+        assertTrue(viewModel.uiState.value.pendingSearchSources.isNotEmpty())
+
+        repository.connectionState.value = ConnectionState.DISCONNECTED
+        delay(50)
+
+        assertTrue(viewModel.uiState.value.pendingSearchSources.isEmpty())
+        assertNull(viewModel.uiState.value.toolExecution)
     }
 }
 

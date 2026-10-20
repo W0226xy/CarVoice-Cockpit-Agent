@@ -1,25 +1,21 @@
 package com.carvoice.agent.config
 
 enum class LlmProviderMode(val value: String) {
-    MOCK("mock"),
     OPENAI_COMPATIBLE("openai_compatible"),
 }
 
 data class LlmConfig(
     val providerMode: LlmProviderMode,
-    val baseUrl: String? = null,
-    val apiKey: String? = null,
-    val model: String? = null,
+    val baseUrl: String,
+    val apiKey: String,
+    val model: String,
 ) {
     companion object {
         fun fromEnvironment(environment: Map<String, String> = System.getenv()): LlmConfig {
-            val modeValue = environment["LLM_PROVIDER"]?.trim()?.lowercase() ?: "mock"
+            val modeValue = environment["LLM_PROVIDER"]?.trim()?.lowercase()
+                ?: LlmProviderMode.OPENAI_COMPATIBLE.value
             val mode = LlmProviderMode.entries.firstOrNull { it.value == modeValue }
-                ?: error("LLM_PROVIDER must be mock or openai_compatible")
-
-            if (mode == LlmProviderMode.MOCK) {
-                return LlmConfig(providerMode = mode)
-            }
+                ?: error("LLM_PROVIDER must be openai_compatible; Mock LLM is not supported")
 
             return LlmConfig(
                 providerMode = mode,
@@ -33,7 +29,7 @@ data class LlmConfig(
 
 private fun Map<String, String>.required(name: String): String =
     get(name)?.trim()?.takeIf(String::isNotEmpty)
-        ?: error("$name is required when LLM_PROVIDER=openai_compatible")
+        ?: error("$name is required for OpenAI-compatible LLM configuration")
 
 /**
  * Koog appends `v1/chat/completions` itself. Providers commonly document their

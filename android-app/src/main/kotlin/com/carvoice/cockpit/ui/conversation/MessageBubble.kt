@@ -27,17 +27,19 @@ import androidx.compose.ui.unit.dp
 import com.carvoice.cockpit.model.ChatMessage
 import com.carvoice.cockpit.model.MessageAuthor
 import com.carvoice.cockpit.ui.theme.CarVoiceCockpitTheme
+import com.carvoice.cockpit.ui.components.WebSearchSourcesCard
 import kotlin.math.PI
 import kotlin.math.sin
 
 @Composable
 fun ChatMessageItem(
     message: ChatMessage,
+    onOpenSource: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     when (message.author) {
         MessageAuthor.USER -> UserMessage(message.content, modifier)
-        MessageAuthor.AGENT -> AssistantMessage(message.content, modifier)
+        MessageAuthor.AGENT -> AssistantMessage(message, onOpenSource, modifier)
     }
 }
 
@@ -72,7 +74,8 @@ fun UserMessage(
 
 @Composable
 fun AssistantMessage(
-    content: String,
+    message: ChatMessage,
+    onOpenSource: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -93,9 +96,17 @@ fun AssistantMessage(
                 style = MaterialTheme.typography.labelLarge,
             )
             Text(
-                text = content,
+                text = message.content,
                 style = MaterialTheme.typography.bodyLarge,
             )
+            if (message.sources.isNotEmpty()) {
+                WebSearchSourcesCard(
+                    query = message.searchQuery.orEmpty(),
+                    sources = message.sources,
+                    onOpenSource = onOpenSource,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
         }
     }
 }

@@ -16,6 +16,8 @@ import com.carvoice.cockpit.model.ToolExecutionState
 import com.carvoice.cockpit.model.ToolExecutionUiState
 import com.carvoice.cockpit.model.VehicleActionUi
 import com.carvoice.cockpit.model.WorkspaceDestination
+import com.carvoice.cockpit.model.WebSearchSourceUi
+import com.carvoice.cockpit.model.WebSearchSourcesUi
 import java.util.UUID
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -66,6 +68,16 @@ class ConversationViewModel(
                             it.activeAssistantMessageId
                         } else {
                             null
+                        },
+                        toolExecution = if (connectionState == ConnectionState.CONNECTED) {
+                            it.toolExecution
+                        } else {
+                            null
+                        },
+                        pendingSearchSources = if (connectionState == ConnectionState.CONNECTED) {
+                            it.pendingSearchSources
+                        } else {
+                            emptyMap()
                         },
                     )
                 }
@@ -123,6 +135,8 @@ class ConversationViewModel(
                 },
                 inputText = "",
                 pendingVehicleAction = null,
+                toolExecution = null,
+                pendingSearchSources = emptyMap(),
                 respondingSessionId = sessionId,
                 activeRequestId = requestId,
                 activeAssistantMessageId = null,
@@ -169,6 +183,7 @@ class ConversationViewModel(
                 activeAssistantMessageId = null,
                 error = null,
                 retryMessage = null,
+                pendingSearchSources = emptyMap(),
             )
         }
     }
@@ -210,6 +225,7 @@ class ConversationViewModel(
                 activeAssistantMessageId = null,
                 error = null,
                 retryMessage = null,
+                pendingSearchSources = emptyMap(),
             )
         }
     }
@@ -259,6 +275,7 @@ class ConversationViewModel(
                 retryMessage = null,
                 deleteTargetConversationId = null,
                 cockpitStates = it.cockpitStates - targetId,
+                pendingSearchSources = emptyMap(),
             )
         }
     }
@@ -300,12 +317,17 @@ class ConversationViewModel(
                     val state = when (event.status) {
                         ToolCallStatus.COMPLETED, ToolCallStatus.CANCELLED ->
                             ToolExecutionState.COMPLETED
+                        ToolCallStatus.FAILED -> ToolExecutionState.FAILED
                         else -> ToolExecutionState.RUNNING
                     }
                     _uiState.update {
                         it.copy(
                             toolExecution = ToolExecutionUiState(
-                                title = "模拟座舱",
+                                title = if (event.toolName == "tavily_web_search") {
+                                    "联网搜索"
+                                } else {
+                                    "模拟座舱"
+                                },
                                 detail = event.message,
                                 state = state,
                             ),
@@ -330,6 +352,61 @@ class ConversationViewModel(
                     )
                 }
             }
+            is ConversationStreamEvent.WebSearchSources -> attachSearchSources(event)
+        }
+    }
+
+    private fun attachSearchSources(event: ConversationStreamEvent.WebSearchSources) {
+        val sources = WebSearchSourcesUi(
+            query = event.query,
+            sources = event.sources.map { source ->
+                WebSearchSourceUi(
+                    source.index,
+                    source.title,
+                    source.url,
+                    source.domain,
+                    source.snippet,
+                    source.publishedAt,
+                )
+            },
+        )
+        _uiState.update { state ->
+            val session = state.sessions.firstOrNull { it.id == event.conversationId }
+                ?: return@update state
+            val hasAssistantMessage = session.messages.any {
+                it.serverMessageId == event.messageId
+            }
+            val isExpectedPendingResponse =
+                state.activeRequestId == event.messageId &&
+                    state.respondingSessionId == event.conversationId
+            if (!hasAssistantMessage && !isExpectedPendingResponse) {
+                return@update state
+            }
+            state.copy(
+                sessions = if (hasAssistantMessage) {
+                    state.sessions.updateSession(event.conversationId) { session ->
+                        session.copy(
+                            messages = session.messages.map { message ->
+                                if (message.serverMessageId == event.messageId) {
+                                    message.copy(
+                                        searchQuery = sources.query,
+                                        sources = sources.sources,
+                                    )
+                                } else {
+                                    message
+                                }
+                            },
+                        )
+                    }
+                } else {
+                    state.sessions
+                },
+                pendingSearchSources = if (hasAssistantMessage) {
+                    state.pendingSearchSources - event.messageId
+                } else {
+                    state.pendingSearchSources + (event.messageId to sources)
+                },
+            )
         }
     }
 
@@ -366,6 +443,7 @@ class ConversationViewModel(
         }
 
         val assistantId = state.activeAssistantMessageId ?: nextMessageId++
+        val pendingSources = state.pendingSearchSources[event.requestId]
         _uiState.update {
             it.copy(
                 sessions = it.sessions.updateSession(event.conversationId) { session ->
@@ -385,11 +463,15 @@ class ConversationViewModel(
                             id = assistantId,
                             author = MessageAuthor.AGENT,
                             content = event.text,
+                            serverMessageId = event.requestId,
+                            searchQuery = pendingSources?.query,
+                            sources = pendingSources?.sources.orEmpty(),
                         )
                     }
                     session.copy(messages = messages, updatedAtLabel = "刚刚")
                 },
                 activeAssistantMessageId = assistantId,
+                pendingSearchSources = it.pendingSearchSources - event.requestId,
             )
         }
     }
@@ -408,6 +490,7 @@ class ConversationViewModel(
                 activeAssistantMessageId = null,
                 error = null,
                 retryMessage = null,
+                pendingSearchSources = it.pendingSearchSources - event.requestId,
             )
         }
     }
@@ -419,6 +502,7 @@ class ConversationViewModel(
                 activeRequestId = null,
                 activeAssistantMessageId = null,
                 pendingVehicleAction = null,
+                pendingSearchSources = emptyMap(),
                 error = ConversationErrorUi(message, retryable),
             )
         }

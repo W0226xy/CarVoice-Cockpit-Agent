@@ -1,6 +1,6 @@
 package com.carvoice.agent.routing
 
-import com.carvoice.agent.agent.MockStreamingAgent
+import com.carvoice.agent.testing.FakeCarVoiceAgent
 import com.carvoice.agent.tasks.ChatTask
 import com.carvoice.agent.tasks.ClarificationTask
 import com.carvoice.agent.tasks.KnowledgeTask
@@ -12,7 +12,7 @@ import kotlin.test.Test
 import kotlin.test.assertIs
 
 class TaskRouterTest {
-    private val router = TaskRouter(ChatTask(MockStreamingAgent(0)))
+    private val router = TaskRouter(ChatTask(FakeCarVoiceAgent()))
 
     @Test
     fun `all six intents route deterministically`() {

@@ -16,6 +16,7 @@ class IntentRouter(
     }
 
     suspend fun classify(message: String): IntentResult {
+        deterministicClassification(message)?.let { return it }
         val modelResult = runCatching {
             model.classifyIntent(message)?.let(::parse)
         }.getOrNull()
@@ -34,17 +35,27 @@ class IntentRouter(
         return decoded.copy(slots = decoded.slots.mapValues { it.value.trim() })
     }
 
-    private fun keywordFallback(message: String): IntentResult? {
+    /**
+     * Rules whose meaning must not be left to the model.  In particular, an
+     * internet/current-information request is still general chat: the chat task
+     * owns the later decision to call web search.  KNOWLEDGE_QUERY is reserved
+     * for local or future RAG-backed material.
+     */
+    private fun deterministicClassification(message: String): IntentResult? {
         val text = message.trim()
         val intent = when {
             vehicleKeywords.any(text::contains) -> IntentType.VEHICLE_CONTROL
             navigationKeywords.any(text::contains) -> IntentType.NAVIGATION
             mediaKeywords.any(text::contains) -> IntentType.MEDIA
-            knowledgeKeywords.any(text::contains) -> IntentType.KNOWLEDGE_QUERY
+            realTimeOrWebPatterns.any { it.containsMatchIn(text) } -> IntentType.GENERAL_CHAT
+            localKnowledgePatterns.any { it.containsMatchIn(text) } -> IntentType.KNOWLEDGE_QUERY
             else -> return null
         }
-        return IntentResult(intent, 0.7, extractExplicitSlots(intent, text))
+        return IntentResult(intent, 0.9, extractExplicitSlots(intent, text))
     }
+
+    private fun keywordFallback(message: String): IntentResult? =
+        deterministicClassification(message)
 
     private fun extractExplicitSlots(intent: IntentType, text: String): Map<String, String> =
         when (intent) {
@@ -104,7 +115,23 @@ class IntentRouter(
         val vehicleKeywords = listOf("空调", "车窗", "除雾", "风量")
         val navigationKeywords = listOf("导航", "带我去", "前往")
         val mediaKeywords = listOf("播放", "音乐", "歌曲")
-        val knowledgeKeywords = listOf("故障灯", "车辆手册", "是什么意思")
+        val realTimeOrWebPatterns = listOf(
+            Regex("""(联网|网络)\s*(搜索|查询|查)"""),
+            Regex("""(搜索一下|给我搜索|查一下).*(新闻|天气|油价|价格|汇率|赛事|比赛|政策|职务)"""),
+            Regex("""(新闻|天气|下雨|油价|价格|汇率|实时路况|赛事|比赛结果|政策|法规|当前职务|现任).*(今天|今日|明天|现在|当前|实时|最近|最新)"""),
+            Regex("""(今天|今日|明天|现在|当前|实时|最近|最新).*(新闻|天气|下雨|油价|价格|汇率|路况|赛事|比赛|政策|法规|职务)"""),
+            Regex("""(给我|提供|附上)?来源"""),
+        )
+        val localKnowledgePatterns = listOf(
+            Regex("""知识库"""),
+            Regex("""(车辆)?用户手册"""),
+            Regex("""车辆手册"""),
+            Regex("""说明书"""),
+            Regex("""故障灯"""),
+            Regex("""座舱功能"""),
+            Regex("""上传(的)?文档"""),
+            Regex("""(项目|内置).*(资料|知识库)"""),
+        )
         val allowedSlots = mapOf(
             IntentType.GENERAL_CHAT to emptySet(),
             IntentType.NAVIGATION to setOf("destination"),

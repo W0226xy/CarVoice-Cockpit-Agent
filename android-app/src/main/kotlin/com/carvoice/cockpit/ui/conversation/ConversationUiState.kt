@@ -9,6 +9,7 @@ import com.carvoice.cockpit.model.KnowledgeBaseItem
 import com.carvoice.cockpit.model.ToolExecutionUiState
 import com.carvoice.cockpit.model.VehicleActionUi
 import com.carvoice.cockpit.model.SimulatedCockpitStateUi
+import com.carvoice.cockpit.model.WebSearchSourcesUi
 import com.carvoice.cockpit.model.WorkspaceDestination
 import com.carvoice.cockpit.model.mockKnowledgeBaseItems
 import com.carvoice.cockpit.model.toHistoryItem
@@ -30,6 +31,7 @@ data class ConversationUiState(
     val retryMessage: String? = null,
     val deleteTargetConversationId: String? = null,
     val cockpitStates: Map<String, SimulatedCockpitStateUi> = emptyMap(),
+    val pendingSearchSources: Map<String, WebSearchSourcesUi> = emptyMap(),
 ) {
     val activeSession: ConversationSession?
         get() = sessions.firstOrNull { it.id == activeSessionId }

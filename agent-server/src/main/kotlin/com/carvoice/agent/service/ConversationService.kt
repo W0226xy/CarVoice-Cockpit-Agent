@@ -6,6 +6,7 @@ import com.carvoice.agent.intent.IntentRouter
 import com.carvoice.agent.routing.TaskRouter
 import com.carvoice.agent.tasks.TaskContext
 import com.carvoice.agent.tasks.TaskResult
+import com.carvoice.agent.tasks.TaskStreamEvent
 import com.carvoice.contracts.AssistantCompletedPayload
 import com.carvoice.contracts.AssistantDeltaPayload
 import com.carvoice.contracts.ChatProtocol
@@ -16,6 +17,7 @@ import com.carvoice.contracts.SocketEvent
 import com.carvoice.contracts.SocketEventType
 import com.carvoice.contracts.ToolCallStatus
 import com.carvoice.contracts.ToolProgressPayload
+import com.carvoice.contracts.WebSearchSourcesPayload
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.collect
 import kotlinx.serialization.json.Json
@@ -138,10 +140,37 @@ class ConversationService(
         when (result) {
             is TaskResult.Streaming -> {
                 val text = StringBuilder()
-                result.chunks.collect { chunk ->
-                    if (chunk.isNotEmpty()) {
-                        text.append(chunk)
-                        emitDelta(requestId, conversationId, chunk, emit)
+                result.events.collect { streamEvent ->
+                    when (streamEvent) {
+                        is TaskStreamEvent.Delta -> if (streamEvent.text.isNotEmpty()) {
+                            text.append(streamEvent.text)
+                            emitDelta(requestId, conversationId, streamEvent.text, emit)
+                        }
+                        is TaskStreamEvent.ToolProgress -> emit(
+                            SocketEvent(
+                                type = SocketEventType.TOOL_PROGRESS,
+                                requestId = requestId,
+                                conversationId = conversationId,
+                                payload = json.encodeToJsonElement(
+                                    ToolProgressPayload(
+                                        streamEvent.callId,
+                                        streamEvent.toolName,
+                                        streamEvent.status,
+                                        streamEvent.message,
+                                    ),
+                                ),
+                            ),
+                        )
+                        is TaskStreamEvent.SearchSources -> emit(
+                            SocketEvent(
+                                type = SocketEventType.WEB_SEARCH_SOURCES,
+                                requestId = requestId,
+                                conversationId = conversationId,
+                                payload = json.encodeToJsonElement<WebSearchSourcesPayload>(
+                                    streamEvent.payload,
+                                ),
+                            ),
+                        )
                     }
                 }
                 complete(requestId, conversationId, text.toString(), history, emit)

@@ -28,6 +28,7 @@ WebSocket 事件后续统一使用以下信封：
 | Android → 服务端 | `control_confirmation_response` | 确认或取消模拟座舱操作 |
 | 服务端 → Android | `tool_progress` | 模拟座舱工具进度 |
 | 服务端 → Android | `simulated_cockpit_state` | 执行后的完整模拟座舱状态 |
+| 服务端 → Android | `web_search_sources` | 当前助手回答引用的联网来源 |
 
 `chat_request` 的 payload：
 
@@ -52,6 +53,40 @@ WebSocket 事件后续统一使用以下信封：
 ```
 
 服务端拒绝空消息和超过 4000 字符的消息。非法 JSON、未知事件及模型失败均返回安全错误，不包含堆栈、密钥、环境变量或完整模型地址。
+
+## 联网搜索事件时序
+
+需要联网的 `GENERAL_CHAT` 正常顺序：
+
+1. `tool_progress`，`toolName=tavily_web_search`、`status=RUNNING`；
+2. `web_search_sources`；
+3. `tool_progress`，`status=COMPLETED`；
+4. 一个或多个 `assistant_delta`；
+5. `assistant_completed`。
+
+`web_search_sources` payload：
+
+```json
+{
+  "conversationId": "conversation-001",
+  "messageId": "req-20261019-001",
+  "query": "最近 AI 新闻",
+  "sources": [
+    {
+      "index": 1,
+      "title": "来源标题",
+      "url": "https://example.com/news",
+      "domain": "example.com",
+      "snippet": "受长度限制的来源摘要",
+      "publishedAt": "2026-10-20"
+    }
+  ]
+}
+```
+
+`messageId` 与当前请求的助手回答关联，正文通过 `[1]`、`[2]` 引用对应来源。仅在搜索成功且至少存在一个合法 http/https 来源时发送。旧客户端可以忽略未知事件。
+
+搜索禁用、超时、无结果、MCP 不可用或格式异常时只发送 `tool_progress(FAILED)`，不发送来源事件；随后同一助手消息继续普通流式回答，并明确说明未获得实时来源。任何事件均不得包含 API Key、授权头、MCP URL 或内部异常。
 
 ## 模拟座舱确认
 

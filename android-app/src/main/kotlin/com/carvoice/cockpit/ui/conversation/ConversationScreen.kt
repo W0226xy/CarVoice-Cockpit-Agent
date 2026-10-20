@@ -40,18 +40,20 @@ fun ConversationScreen(
     onCancelVehicleAction: () -> Unit,
     onConfirmVehicleAction: () -> Unit,
     onRetry: () -> Unit,
+    onOpenSource: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
     val hasConversationContent = state.messages.isNotEmpty() ||
         state.toolExecution != null ||
-    state.simulatedCockpitState != null ||
+        state.simulatedCockpitState != null ||
         state.pendingVehicleAction != null ||
         state.isAssistantResponding ||
         state.error != null
 
     LaunchedEffect(
         state.messages.size,
+        state.messages.sumOf { it.sources.size },
         state.toolExecution,
         state.simulatedCockpitState,
         state.pendingVehicleAction,
@@ -91,7 +93,7 @@ fun ConversationScreen(
                     verticalArrangement = Arrangement.spacedBy(18.dp),
                 ) {
                     items(state.messages, key = { "message-${it.id}" }) { message ->
-                        ChatMessageItem(message)
+                        ChatMessageItem(message, onOpenSource)
                     }
                     state.toolExecution?.let { toolState ->
                         item(key = "tool-status") {
@@ -100,13 +102,13 @@ fun ConversationScreen(
                                 modifier = Modifier.padding(start = 52.dp),
                             )
                         }
-                        state.simulatedCockpitState?.let { cockpitState ->
-                            item(key = "simulated-cockpit-state") {
-                                SimulatedCockpitStateCard(
-                                    state = cockpitState,
-                                    modifier = Modifier.padding(start = 52.dp),
-                                )
-                            }
+                    }
+                    state.simulatedCockpitState?.let { cockpitState ->
+                        item(key = "simulated-cockpit-state") {
+                            SimulatedCockpitStateCard(
+                                state = cockpitState,
+                                modifier = Modifier.padding(start = 52.dp),
+                            )
                         }
                     }
                     if (state.isAssistantResponding) {

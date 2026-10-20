@@ -16,13 +16,15 @@
 - 桌面式会话侧栏、本地历史切换和知识库管理占位页面；
 - 基于 `StateFlow` 的本地 UI 状态与可替换的会话仓储接口。
 - Android 与 Ktor 之间的 `/ws/chat` WebSocket 通信和统一事件协议；
-- Koog 0.5.4 OpenAI-compatible 流式模型适配器及无密钥 Mock 模式。
+- Koog 0.5.4 OpenAI-compatible 真实模型流式适配器；
 - LLM JSON 结构化 `IntentRouter` 与失败时的确定性关键词兜底；
 - `TaskRouter` 对聊天、导航、媒体、知识查询、模拟座舱和澄清任务的确定性分发；
 - 每个 `conversationId` 独立的运行期模拟座舱状态、确认弹窗和状态卡片；
 - 模拟空调、温度、风量、前挡除雾和主/副驾驶车窗控制。
+- `GENERAL_CHAT` 的按需联网决策、Tavily MCP 搜索进度和带来源流式回答；
+- Android 助手消息下的来源卡片与安全 http/https 外链打开。
 
-当前不包含 Tavily MCP、RAG、真实地图/媒体 App 联动、真实车辆控制、持久化、语音和鉴权。项目禁止连接 Vehicle HAL、CAN 总线及任何真实车辆设备。
+当前不包含 RAG、真实地图/媒体 App 联动、真实车辆控制、持久化、语音和鉴权。项目禁止连接 Vehicle HAL、CAN 总线及任何真实车辆设备。
 
 ## 技术栈
 
@@ -86,21 +88,36 @@ tcp:8081`，并以 `-PagentWsUrl=ws://127.0.0.1:8081/ws/chat` 安装 debug 包�
 
 ## 启动 Agent 服务
 
-Mock 模式无需 API Key：
-
-```bash
-LLM_PROVIDER=mock SERVER_PORT=8081 ./gradlew :agent-server:run
-```
-
-OpenAI-compatible 模式通过 Koog 调用模型：
+Agent 服务仅支持通过 Koog 调用 OpenAI-compatible 真实模型。复制配置模板并填写服务商参数：
 
 ```bash
 cp .env.example .env
-# 编辑 .env：填写真实的 API Key、模型名与服务商域名（不加 /v1）
+# 编辑 .env：填写 OPENAI_BASE_URL、OPENAI_API_KEY 和 OPENAI_MODEL
 ./gradlew :agent-server:run
 ```
 
-服务启动时会读取当前目录的 `.env`，但操作系统环境变量优先，可用于容器和 CI。不要把真实 `OPENAI_API_KEY` 写入命令历史、README 或仓库；应由本地环境或密钥管理系统注入。
+`LLM_PROVIDER` 缺省时默认为 `openai_compatible`，也可显式设置为该值。其他 Provider 值不会降级到测试模型。`OPENAI_BASE_URL` 可以是服务根地址或以 `/v1` 结尾的地址，后者会被规范化，避免 Koog 重复拼接 `/v1/v1/chat/completions`。
+
+服务启动时会读取当前目录的 `.env`，但操作系统环境变量优先，可用于容器和 CI。`OPENAI_BASE_URL`、`OPENAI_API_KEY` 或 `OPENAI_MODEL` 缺失或为空时服务会直接报告配置错误并停止启动。不要把真实 `OPENAI_API_KEY` 写入命令历史、README 或仓库；应由本地环境或密钥管理系统注入。
+
+### 可选 Tavily MCP 联网搜索
+
+联网搜索默认关闭，普通聊天无需 Tavily 配置即可工作。启用时在本地 `.env` 中设置：
+
+```dotenv
+TAVILY_ENABLED=true
+TAVILY_API_KEY=replace_with_local_secret
+TAVILY_MCP_URL=https://mcp.tavily.com/mcp/
+TAVILY_SEARCH_TIMEOUT_SECONDS=15
+TAVILY_MAX_RESULTS=5
+TAVILY_SEARCH_DEPTH=basic
+TAVILY_MAX_SNIPPET_CHARS=800
+TAVILY_MAX_CONTEXT_CHARS=6000
+```
+
+只有 `TAVILY_ENABLED=true`、密钥非空且 MCP URL 合法时才允许联网。服务端通过 Streamable HTTP MCP 仅发现并调用 `tavily-search`/`tavily_search`，不会调用 extract、crawl、map，也不会退化为 Tavily REST API。密钥只留在服务端，不进入日志、WebSocket 或 Android。
+
+`GENERAL_CHAT` 先根据确定性规则和严格 JSON 模型决策判断是否需要联网。搜索超时、无结果、协议异常或远端不可用时会发送失败进度，随后自动回到原普通流式回答，并明确说明没有实时来源。网页内容始终作为不可信参考资料，不能改变系统指令、权限或工具行为。
 
 默认监听 `0.0.0.0:8081`。可通过 `SERVER_HOST` 和 `SERVER_PORT` 修改。健康检查：
 
@@ -111,7 +128,7 @@ curl http://localhost:8081/health
 预期响应：
 
 ```json
-{"status":"ok","projectName":"CarVoice Cockpit Agent","providerMode":"mock"}
+{"status":"ok","projectName":"CarVoice Cockpit Agent","providerMode":"openai_compatible"}
 ```
 
 运行全部单元测试：
@@ -124,10 +141,11 @@ curl http://localhost:8081/health
 
 1. **车机端基础界面（已完成）**：建立 MVVM、会话页、状态栏和连接状态组件。
 2. **实时通信（已完成基础闭环）**：实现 WebSocket、事件分发和错误状态。
-3. **Agent 流式回复（已完成）**：接入 Koog 与 OpenAI-compatible 模型，支持 Mock 演示。
+3. **Agent 流式回复（已完成）**：接入 Koog 与 OpenAI-compatible 真实模型。
 4. **意图路由与模拟座舱（已完成）**：实现结构化分类、任务路由、确认链路和内存态模拟控制。
-5. **语音交互**：接入可替换的 ASR/TTS 适配层，完善打断和生命周期管理。
-6. **车辆知识问答**：接入 PostgreSQL、pgvector、Redis 和可追溯的 RAG。
-7. **联调与交付**：完成安全测试、可观测性、Docker Compose 编排和演示验收。
+5. **Tavily MCP 联网搜索（已完成）**：实现按需搜索、来源引用、失败降级和 Android 来源卡片。
+6. **语音交互**：接入可替换的 ASR/TTS 适配层，完善打断和生命周期管理。
+7. **车辆知识问答**：接入 PostgreSQL、pgvector、Redis 和可追溯的 RAG。
+8. **联调与交付**：完成安全测试、可观测性、Docker Compose 编排和演示验收。
 
 详细约定见 [`docs/`](docs/)。

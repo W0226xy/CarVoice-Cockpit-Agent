@@ -61,6 +61,32 @@ class IntentRouterTest {
         assertEquals(IntentType.UNKNOWN, unknown.intent)
         assertEquals(0.0, unknown.confidence)
     }
+
+    @Test
+    fun `current information deterministically stays general chat even when model says knowledge`() = runBlocking {
+        val router = IntentRouter(
+            FakeAgent("""{"intent":"KNOWLEDGE_QUERY","confidence":0.99,"slots":{"topic":"南京新闻"}}"""),
+        )
+
+        assertEquals(IntentType.GENERAL_CHAT, router.classify("今天南京有哪些新闻").intent)
+        assertEquals(IntentType.GENERAL_CHAT, router.classify("南京今天的天气怎么样").intent)
+        assertEquals(IntentType.GENERAL_CHAT, router.classify("查一下今天油价").intent)
+        assertEquals(IntentType.GENERAL_CHAT, router.classify("最近有什么 AI 新闻").intent)
+        assertEquals(IntentType.GENERAL_CHAT, router.classify("当前美元汇率").intent)
+        assertEquals(IntentType.GENERAL_CHAT, router.classify("给我搜索一个主题并附来源").intent)
+        assertEquals(
+            IntentType.GENERAL_CHAT,
+            IntentRouter(FakeAgent(failure = true)).classify("今天南京有哪些新闻").intent,
+        )
+    }
+
+    @Test
+    fun `only explicit local materials use knowledge query fallback`() = runBlocking {
+        val router = IntentRouter(FakeAgent(failure = true))
+
+        assertEquals(IntentType.KNOWLEDGE_QUERY, router.classify("这个故障灯是什么意思").intent)
+        assertEquals(IntentType.KNOWLEDGE_QUERY, router.classify("查知识库中的车辆用户手册").intent)
+    }
 }
 
 private class FakeAgent(

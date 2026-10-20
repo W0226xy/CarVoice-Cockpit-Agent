@@ -88,6 +88,23 @@ APP_BASE_NAME=${0##*/}
 # Discard cd standard output in case $CDPATH is set (https://github.com/gradle/gradle/issues/25036)
 APP_HOME=$( cd -P "${APP_HOME:-./}" > /dev/null && printf '%s\n' "$PWD" ) || exit
 
+# Keep Gradle's wrapper and dependency caches inside the checkout by default.
+# This makes `./gradlew` work in managed development environments where the
+# user's home directory is read-only. Set GRADLE_USER_HOME explicitly to keep
+# using a shared cache.
+if [ -z "${GRADLE_USER_HOME:-}" ]; then
+    GRADLE_USER_HOME="$APP_HOME/.gradle"
+    export GRADLE_USER_HOME
+fi
+
+# When a managed environment exposes an existing Gradle dependency cache as
+# read-only, Gradle can safely reuse it while keeping all new state in the
+# writable project-local GRADLE_USER_HOME above.
+if [ -z "${GRADLE_RO_DEP_CACHE:-}" ] && [ -n "${HOME:-}" ] && [ -d "$HOME/.gradle/caches/modules-2" ]; then
+    GRADLE_RO_DEP_CACHE="$HOME/.gradle/caches"
+    export GRADLE_RO_DEP_CACHE
+fi
+
 # Use the maximum available, or set MAX_FD != -1 to use that value.
 MAX_FD=maximum
 

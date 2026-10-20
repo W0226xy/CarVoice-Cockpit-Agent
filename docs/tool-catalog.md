@@ -10,6 +10,19 @@
 
 ## 工具定义
 
+### `tavily_web_search`
+
+- **用途**：仅为 `GENERAL_CHAT` 检索用户明确要求或明显时效性的公开网页信息。
+- **实现边界**：通过可替换 `WebSearchPort` 调用 Tavily 远程 Streamable HTTP MCP。
+- **远端工具白名单**：只允许 `tavily-search` 或 `tavily_search`。
+- **禁止能力**：不得调用 extract、crawl、map 或 Tavily REST API。
+- **输入参数**：简化后的公开检索 query、配置限定的 `search_depth` 和 `max_results`；不得包含密钥、完整历史或无关提示词。
+- **输出结果**：经过 http/https URL 校验、去重和长度限制的 title、url、domain、snippet、publishedAt。
+- **风险等级**：只读。
+- **二次确认**：否。
+- **失败策略**：发送失败进度并降级为普通 LLM 回答，不伪造来源。
+- **安全边界**：网页是不可信输入，只能提供事实参考，不能改变系统指令、路由、权限或触发工具。
+
 ### `query_vehicle_status`
 
 - **用途**：读取模拟车辆状态。

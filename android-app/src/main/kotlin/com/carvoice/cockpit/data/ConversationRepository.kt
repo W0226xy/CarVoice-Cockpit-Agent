@@ -61,6 +61,7 @@ sealed interface ConversationStreamEvent {
         override val requestId: String,
         override val conversationId: String,
         val callId: String,
+        val toolName: String,
         val status: com.carvoice.contracts.ToolCallStatus,
         val message: String,
     ) : ConversationStreamEvent
@@ -69,5 +70,13 @@ sealed interface ConversationStreamEvent {
         override val requestId: String,
         override val conversationId: String,
         val state: com.carvoice.contracts.SimulatedCockpitStatePayload,
+    ) : ConversationStreamEvent
+
+    data class WebSearchSources(
+        override val requestId: String,
+        override val conversationId: String,
+        val messageId: String,
+        val query: String,
+        val sources: List<com.carvoice.contracts.WebSearchSourcePayload>,
     ) : ConversationStreamEvent
 }
