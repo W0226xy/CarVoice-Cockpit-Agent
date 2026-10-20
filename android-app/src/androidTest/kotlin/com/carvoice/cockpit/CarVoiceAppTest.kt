@@ -83,19 +83,27 @@ class CarVoiceAppTest {
     }
 
     @Test
-    fun airConditionerConfirmationStaysLocal() {
+    fun simulatedCockpitConfirmationIsDisplayedAndSubmitted() {
         composeRule.onNodeWithText("+ 新建会话").performClick()
-        composeRule.onNodeWithText("打开空调").performClick()
-        composeRule.onNodeWithText("确认执行车辆操作").assertIsDisplayed()
+        composeRule.onNodeWithTag("chat-input").performTextInput("打开空调")
+        composeRule.onNodeWithText("发送").performClick()
+        composeRule.waitUntil { repository.sent.isNotEmpty() }
+        val conversationId = repository.activeConversationId()
+        runBlocking {
+            repository.emit(
+                ConversationStreamEvent.ControlConfirmationRequired(
+                    "request-control",
+                    conversationId,
+                    "confirmation-1",
+                    "打开空调并将温度设置为 24°C",
+                    System.currentTimeMillis() + 60_000,
+                ),
+            )
+        }
+        composeRule.onNodeWithText("模拟座舱确认").assertIsDisplayed()
         composeRule.onNodeWithText("确认执行").performClick()
-
-        assertTrue(
-            composeRule
-                .onAllNodesWithText("车辆工具将在后续阶段接入，目前无法执行该操作。")
-                .fetchSemanticsNodes()
-                .isNotEmpty(),
-        )
-        assertTrue(repository.sent.isEmpty())
+        composeRule.waitUntil { repository.confirmations.isNotEmpty() }
+        assertTrue(repository.confirmations.single().confirmed)
     }
 
     @Test
@@ -150,6 +158,13 @@ private class FakeConversationRepository : ConversationRepository {
     private val eventFlow = MutableSharedFlow<ConversationStreamEvent>(extraBufferCapacity = 16)
     override val events: Flow<ConversationStreamEvent> = eventFlow
     val sent = mutableListOf<SentMessage>()
+    data class Confirmation(
+        val conversationId: String,
+        val requestId: String,
+        val confirmationId: String,
+        val confirmed: Boolean,
+    )
+    val confirmations = mutableListOf<Confirmation>()
 
     override fun connect() = Unit
 
@@ -161,6 +176,19 @@ private class FakeConversationRepository : ConversationRepository {
         sent += SentMessage(conversationId, requestId, message)
         return Result.success(Unit)
     }
+
+    override suspend fun sendControlConfirmation(
+        conversationId: String,
+        requestId: String,
+        confirmationId: String,
+        confirmed: Boolean,
+    ): Result<Unit> {
+        confirmations += Confirmation(conversationId, requestId, confirmationId, confirmed)
+        return Result.success(Unit)
+    }
+
+    fun activeConversationId(): String =
+        sent.lastOrNull()?.conversationId ?: error("No conversation id available")
 
     suspend fun emit(event: ConversationStreamEvent) {
         eventFlow.emit(event)

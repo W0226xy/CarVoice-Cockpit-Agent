@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-已完成项目准备、车机端基础界面和第 3 阶段流式对话闭环：
+已完成项目准备、流式对话以及意图识别、任务路由与模拟座舱闭环：
 
 - 可构建的 Jetpack Compose 占位应用；
 - 带 `GET /health` 的 Ktor 服务；
@@ -17,8 +17,12 @@
 - 基于 `StateFlow` 的本地 UI 状态与可替换的会话仓储接口。
 - Android 与 Ktor 之间的 `/ws/chat` WebSocket 通信和统一事件协议；
 - Koog 0.5.4 OpenAI-compatible 流式模型适配器及无密钥 Mock 模式。
+- LLM JSON 结构化 `IntentRouter` 与失败时的确定性关键词兜底；
+- `TaskRouter` 对聊天、导航、媒体、知识查询、模拟座舱和澄清任务的确定性分发；
+- 每个 `conversationId` 独立的运行期模拟座舱状态、确认弹窗和状态卡片；
+- 模拟空调、温度、风量、前挡除雾和主/副驾驶车窗控制。
 
-当前不包含 Tool Registry、真实或模拟车控逻辑、语音、RAG、数据库、缓存和鉴权。项目禁止连接 Vehicle HAL、CAN 总线及任何真实车辆设备。
+当前不包含 Tavily MCP、RAG、真实地图/媒体 App 联动、真实车辆控制、持久化、语音和鉴权。项目禁止连接 Vehicle HAL、CAN 总线及任何真实车辆设备。
 
 ## 技术栈
 
@@ -59,6 +63,26 @@
 ./gradlew :android-app:installDebug
 adb shell am start -n com.carvoice.cockpit/.MainActivity
 ```
+
+`debug` 包默认连接 `ws://10.0.2.2:8081/ws/chat`；`10.0.2.2` 是 Android
+模拟器访问开发机的专用地址。请先启动下方的 Agent 服务，再启动应用。
+
+真机不能使用 `10.0.2.2`。开发时可在连接设备后执行 `adb reverse tcp:8081
+tcp:8081`，并以 `-PagentWsUrl=ws://127.0.0.1:8081/ws/chat` 安装 debug 包：
+
+```bash
+./gradlew :android-app:installDebug -PagentWsUrl=ws://127.0.0.1:8081/ws/chat
+```
+
+发布包不会再错误地尝试访问设备自己的 `wss://localhost`。它必须指向已部署、
+具备 TLS 的服务，例如：
+
+```bash
+./gradlew :android-app:assembleRelease \
+  -PagentWsUrl=wss://agent.example.com/ws/chat
+```
+
+未提供该参数时，发布包会明确报告连接失败，而不是访问一个不存在的本地 WSS 服务。
 
 ## 启动 Agent 服务
 
@@ -101,7 +125,7 @@ curl http://localhost:8081/health
 1. **车机端基础界面（已完成）**：建立 MVVM、会话页、状态栏和连接状态组件。
 2. **实时通信（已完成基础闭环）**：实现 WebSocket、事件分发和错误状态。
 3. **Agent 流式回复（已完成）**：接入 Koog 与 OpenAI-compatible 模型，支持 Mock 演示。
-4. **模拟座舱工具**：实现 `MockVehicleTool`、导航/媒体模拟器、确认与审计链路。
+4. **意图路由与模拟座舱（已完成）**：实现结构化分类、任务路由、确认链路和内存态模拟控制。
 5. **语音交互**：接入可替换的 ASR/TTS 适配层，完善打断和生命周期管理。
 6. **车辆知识问答**：接入 PostgreSQL、pgvector、Redis 和可追溯的 RAG。
 7. **联调与交付**：完成安全测试、可观测性、Docker Compose 编排和演示验收。

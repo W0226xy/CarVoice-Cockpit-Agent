@@ -50,6 +50,10 @@ class AgentConnection(
 
     fun connect() {
         if (closed || connectionJob?.isActive == true) return
+        if (config.endpoint.isBlank()) {
+            _state.value = ConnectionState.FAILED
+            return
+        }
         connectionJob = scope.launch {
             _state.value = ConnectionState.CONNECTING
             try {

@@ -16,6 +16,13 @@ interface ConversationRepository {
         message: String,
     ): Result<Unit>
 
+    suspend fun sendControlConfirmation(
+        conversationId: String,
+        requestId: String,
+        confirmationId: String,
+        confirmed: Boolean,
+    ): Result<Unit>
+
     fun close()
 }
 
@@ -40,5 +47,27 @@ sealed interface ConversationStreamEvent {
         val code: String,
         val message: String,
         val retryable: Boolean,
+    ) : ConversationStreamEvent
+
+    data class ControlConfirmationRequired(
+        override val requestId: String,
+        override val conversationId: String,
+        val confirmationId: String,
+        val description: String,
+        val expiresAtEpochMillis: Long,
+    ) : ConversationStreamEvent
+
+    data class ToolProgress(
+        override val requestId: String,
+        override val conversationId: String,
+        val callId: String,
+        val status: com.carvoice.contracts.ToolCallStatus,
+        val message: String,
+    ) : ConversationStreamEvent
+
+    data class SimulatedCockpitState(
+        override val requestId: String,
+        override val conversationId: String,
+        val state: com.carvoice.contracts.SimulatedCockpitStatePayload,
     ) : ConversationStreamEvent
 }

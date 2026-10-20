@@ -6,6 +6,9 @@ import com.carvoice.agent.config.LlmProviderMode
 import com.carvoice.agent.routes.HealthResponse
 import com.carvoice.agent.websocket.SocketEventCodec
 import com.carvoice.contracts.ChatRequestPayload
+import com.carvoice.contracts.ControlConfirmationRequiredPayload
+import com.carvoice.contracts.ControlConfirmationResponsePayload
+import com.carvoice.contracts.SimulatedCockpitStatePayload
 import com.carvoice.contracts.SocketErrorPayload
 import com.carvoice.contracts.SocketEvent
 import com.carvoice.contracts.SocketEventType
@@ -93,6 +96,85 @@ class ApplicationTest {
     fun `invalid unknown and empty events return safe errors`() = testApplication {
         application {
             module(config, MockStreamingAgent(chunkDelayMillis = 0))
+        }
+
+        @Test
+        fun `websocket confirms simulated control before updating state`() = testApplication {
+            application {
+                module(config, MockStreamingAgent(chunkDelayMillis = 0))
+            }
+            val client = createClient { install(WebSockets) }
+
+            client.webSocket("/ws/chat") {
+                receiveEvent()
+                send(
+                    Frame.Text(
+                        codec.encode(
+                            SocketEvent(
+                                type = SocketEventType.CHAT_REQUEST,
+                                requestId = "control-request",
+                                conversationId = "conversation-control",
+                                payload = codec.json.encodeToJsonElement(
+                                    ChatRequestPayload("打开空调并调到 24 度"),
+                                ),
+                            ),
+                        ),
+                    ),
+                )
+                val beforeConfirmation = mutableListOf<SocketEvent>()
+                withTimeout(3_000) {
+                    while (beforeConfirmation.none {
+                            it.type == SocketEventType.ASSISTANT_COMPLETED
+                        }
+                    ) {
+                        beforeConfirmation += receiveEvent()
+                    }
+                }
+                assertTrue(beforeConfirmation.none {
+                    it.type == SocketEventType.SIMULATED_COCKPIT_STATE
+                })
+                val required = beforeConfirmation.first {
+                    it.type == SocketEventType.CONTROL_CONFIRMATION_REQUIRED
+                }
+                val confirmation = codec.json.decodeFromJsonElement<ControlConfirmationRequiredPayload>(
+                    requireNotNull(required.payload),
+                )
+
+                send(
+                    Frame.Text(
+                        codec.encode(
+                            SocketEvent(
+                                type = SocketEventType.CONTROL_CONFIRMATION_RESPONSE,
+                                requestId = "confirmation-response",
+                                conversationId = "conversation-control",
+                                payload = codec.json.encodeToJsonElement(
+                                    ControlConfirmationResponsePayload(
+                                        confirmation.confirmationId,
+                                        true,
+                                    ),
+                                ),
+                            ),
+                        ),
+                    ),
+                )
+                val afterConfirmation = mutableListOf<SocketEvent>()
+                withTimeout(3_000) {
+                    while (afterConfirmation.none {
+                            it.type == SocketEventType.ASSISTANT_COMPLETED
+                        }
+                    ) {
+                        afterConfirmation += receiveEvent()
+                    }
+                }
+                val stateEvent = afterConfirmation.first {
+                    it.type == SocketEventType.SIMULATED_COCKPIT_STATE
+                }
+                val state = codec.json.decodeFromJsonElement<SimulatedCockpitStatePayload>(
+                    requireNotNull(stateEvent.payload),
+                )
+                assertTrue(state.acEnabled)
+                assertEquals(24f, state.targetTemperature)
+            }
         }
         val client = createClient {
             install(WebSockets)

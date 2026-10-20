@@ -11,6 +11,9 @@ import com.carvoice.cockpit.model.ConversationSession
 import com.carvoice.cockpit.model.MessageAuthor
 import com.carvoice.cockpit.model.QuickAction
 import com.carvoice.cockpit.model.QuickActionType
+import com.carvoice.cockpit.model.SimulatedCockpitStateUi
+import com.carvoice.cockpit.model.ToolExecutionState
+import com.carvoice.cockpit.model.ToolExecutionUiState
 import com.carvoice.cockpit.model.VehicleActionUi
 import com.carvoice.cockpit.model.WorkspaceDestination
 import java.util.UUID
@@ -20,6 +23,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import com.carvoice.contracts.ToolCallStatus
 
 class ConversationViewModel(
     private val repository: ConversationRepository,
@@ -43,6 +47,26 @@ class ConversationViewModel(
                         } else {
                             it.error
                         },
+                        pendingVehicleAction = if (connectionState == ConnectionState.CONNECTED) {
+                            it.pendingVehicleAction
+                        } else {
+                            null
+                        },
+                        respondingSessionId = if (connectionState == ConnectionState.CONNECTED) {
+                            it.respondingSessionId
+                        } else {
+                            null
+                        },
+                        activeRequestId = if (connectionState == ConnectionState.CONNECTED) {
+                            it.activeRequestId
+                        } else {
+                            null
+                        },
+                        activeAssistantMessageId = if (connectionState == ConnectionState.CONNECTED) {
+                            it.activeAssistantMessageId
+                        } else {
+                            null
+                        },
                     )
                 }
             }
@@ -61,15 +85,7 @@ class ConversationViewModel(
             it.copy(
                 destination = WorkspaceDestination.CONVERSATION,
                 inputText = action.demoPrompt,
-                pendingVehicleAction = if (action.type == QuickActionType.AIR_CONDITIONER) {
-                    VehicleActionUi(
-                        title = "确认执行车辆操作",
-                        description = "将空调设置为 24 ℃",
-                        riskMessage = "该操作会修改车辆状态，请确认后执行。",
-                    )
-                } else {
-                    null
-                },
+                pendingVehicleAction = null,
             )
         }
     }
@@ -172,26 +188,11 @@ class ConversationViewModel(
     }
 
     fun cancelVehicleAction() {
-        _uiState.update { it.copy(pendingVehicleAction = null) }
+        respondToVehicleAction(confirmed = false)
     }
 
     fun confirmVehicleAction() {
-        val state = _uiState.value
-        if (state.pendingVehicleAction == null) return
-        val notice = ChatMessage(
-            id = nextMessageId++,
-            author = MessageAuthor.AGENT,
-            content = "车辆工具将在后续阶段接入，目前无法执行该操作。",
-        )
-        _uiState.update {
-            it.copy(
-                sessions = it.sessions.updateSession(state.activeSessionId) { session ->
-                    session.copy(messages = session.messages + notice, updatedAtLabel = "刚刚")
-                },
-                inputText = "",
-                pendingVehicleAction = null,
-            )
-        }
+        respondToVehicleAction(confirmed = true)
     }
 
     fun startNewConversation() {
@@ -257,6 +258,7 @@ class ConversationViewModel(
                 error = null,
                 retryMessage = null,
                 deleteTargetConversationId = null,
+                cockpitStates = it.cockpitStates - targetId,
             )
         }
     }
@@ -271,9 +273,86 @@ class ConversationViewModel(
             is ConversationStreamEvent.AssistantDelta -> appendDelta(event)
             is ConversationStreamEvent.AssistantCompleted -> completeResponse(event)
             is ConversationStreamEvent.Error -> {
-                if (event.requestId == null || event.requestId == _uiState.value.activeRequestId) {
+                if (event.requestId == null ||
+                    event.requestId == _uiState.value.activeRequestId ||
+                    event.code in setOf("INVALID_CONFIRMATION", "EXPIRED_CONFIRMATION")
+                ) {
                     showError(event.message, event.retryable)
                 }
+            }
+            is ConversationStreamEvent.ControlConfirmationRequired -> {
+                if (event.conversationId == _uiState.value.activeSessionId) {
+                    _uiState.update {
+                        it.copy(
+                            pendingVehicleAction = VehicleActionUi(
+                                title = "模拟座舱确认",
+                                description = event.description,
+                                riskMessage = "确认后只会修改服务端内存中的模拟座舱状态。",
+                                confirmationId = event.confirmationId,
+                                conversationId = event.conversationId,
+                            ),
+                        )
+                    }
+                }
+            }
+            is ConversationStreamEvent.ToolProgress -> {
+                if (event.conversationId == _uiState.value.activeSessionId) {
+                    val state = when (event.status) {
+                        ToolCallStatus.COMPLETED, ToolCallStatus.CANCELLED ->
+                            ToolExecutionState.COMPLETED
+                        else -> ToolExecutionState.RUNNING
+                    }
+                    _uiState.update {
+                        it.copy(
+                            toolExecution = ToolExecutionUiState(
+                                title = "模拟座舱",
+                                detail = event.message,
+                                state = state,
+                            ),
+                        )
+                    }
+                }
+            }
+            is ConversationStreamEvent.SimulatedCockpitState -> {
+                val cockpit = event.state
+                _uiState.update {
+                    it.copy(
+                        cockpitStates = it.cockpitStates + (
+                            event.conversationId to SimulatedCockpitStateUi(
+                                cockpit.acEnabled,
+                                cockpit.targetTemperature,
+                                cockpit.fanLevel,
+                                cockpit.frontDefrostEnabled,
+                                cockpit.driverWindowPercent,
+                                cockpit.passengerWindowPercent,
+                            )
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun respondToVehicleAction(confirmed: Boolean) {
+        val action = _uiState.value.pendingVehicleAction ?: return
+        val requestId = UUID.randomUUID().toString()
+        _uiState.update {
+            it.copy(
+                pendingVehicleAction = null,
+                respondingSessionId = action.conversationId,
+                activeRequestId = requestId,
+                activeAssistantMessageId = null,
+                error = null,
+            )
+        }
+        viewModelScope.launch(workerDispatcher) {
+            repository.sendControlConfirmation(
+                action.conversationId,
+                requestId,
+                action.confirmationId,
+                confirmed,
+            ).onFailure {
+                showError("模拟座舱确认发送失败，请检查连接后重试。", retryable = true)
             }
         }
     }
@@ -339,6 +418,7 @@ class ConversationViewModel(
                 respondingSessionId = null,
                 activeRequestId = null,
                 activeAssistantMessageId = null,
+                pendingVehicleAction = null,
                 error = ConversationErrorUi(message, retryable),
             )
         }

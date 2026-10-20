@@ -19,12 +19,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.testTag
 import com.carvoice.cockpit.model.ChatMessage
 import com.carvoice.cockpit.model.MessageAuthor
 import com.carvoice.cockpit.model.QuickAction
 import com.carvoice.cockpit.model.dashboardQuickActions
 import com.carvoice.cockpit.ui.components.ToolExecutionCard
 import com.carvoice.cockpit.ui.components.VehicleActionConfirm
+import com.carvoice.cockpit.ui.components.SimulatedCockpitStateCard
 import com.carvoice.cockpit.ui.theme.CarVoiceCockpitTheme
 import kotlinx.coroutines.delay
 
@@ -43,6 +45,7 @@ fun ConversationScreen(
     val listState = rememberLazyListState()
     val hasConversationContent = state.messages.isNotEmpty() ||
         state.toolExecution != null ||
+    state.simulatedCockpitState != null ||
         state.pendingVehicleAction != null ||
         state.isAssistantResponding ||
         state.error != null
@@ -50,6 +53,7 @@ fun ConversationScreen(
     LaunchedEffect(
         state.messages.size,
         state.toolExecution,
+        state.simulatedCockpitState,
         state.pendingVehicleAction,
         state.isAssistantResponding,
         state.error,
@@ -81,7 +85,8 @@ fun ConversationScreen(
                     state = listState,
                     modifier = Modifier
                         .fillMaxWidth(0.84f)
-                        .widthIn(max = 1120.dp),
+                        .widthIn(max = 1120.dp)
+                        .testTag("conversation-list"),
                     contentPadding = PaddingValues(vertical = 20.dp),
                     verticalArrangement = Arrangement.spacedBy(18.dp),
                 ) {
@@ -94,6 +99,14 @@ fun ConversationScreen(
                                 state = toolState,
                                 modifier = Modifier.padding(start = 52.dp),
                             )
+                        }
+                        state.simulatedCockpitState?.let { cockpitState ->
+                            item(key = "simulated-cockpit-state") {
+                                SimulatedCockpitStateCard(
+                                    state = cockpitState,
+                                    modifier = Modifier.padding(start = 52.dp),
+                                )
+                            }
                         }
                     }
                     if (state.isAssistantResponding) {
@@ -145,7 +158,7 @@ fun ConversationScreen(
                 isReplying = state.isAssistantResponding,
             )
             Text(
-                text = "Agent 回复由服务端流式生成；车辆工具尚未接入",
+                text = "模拟座舱 · 仅运行期内存状态，不连接真实车辆",
                 modifier = Modifier.align(Alignment.CenterHorizontally),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium,

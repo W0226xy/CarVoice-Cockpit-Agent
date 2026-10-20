@@ -1,6 +1,6 @@
 # API 契约
 
-本文定义后续 Android 与 Agent 服务之间的字段约定。当前阶段不实现 WebSocket。字段使用 `camelCase`，时间使用 UTC ISO 8601，标识符由发送方生成并在一次请求内保持不变。
+本文定义 Android 与 Agent 服务之间的 WebSocket 字段约定。字段使用 `camelCase`，标识符由发送方生成并在一次请求内保持不变。
 
 WebSocket 事件后续统一使用以下信封：
 
@@ -24,7 +24,10 @@ WebSocket 事件后续统一使用以下信封：
 | 服务端 → Android | `assistant_delta` | Assistant 增量文本 |
 | 服务端 → Android | `assistant_completed` | 当前回复结束 |
 | 服务端 → Android | `error` | 参数、协议、连接或模型错误 |
-| 预留 | `tool_progress` | 后续工具执行进度，本阶段不发送 |
+| 服务端 → Android | `control_confirmation_required` | 请求确认模拟座舱操作 |
+| Android → 服务端 | `control_confirmation_response` | 确认或取消模拟座舱操作 |
+| 服务端 → Android | `tool_progress` | 模拟座舱工具进度 |
+| 服务端 → Android | `simulated_cockpit_state` | 执行后的完整模拟座舱状态 |
 
 `chat_request` 的 payload：
 
@@ -49,6 +52,41 @@ WebSocket 事件后续统一使用以下信封：
 ```
 
 服务端拒绝空消息和超过 4000 字符的消息。非法 JSON、未知事件及模型失败均返回安全错误，不包含堆栈、密钥、环境变量或完整模型地址。
+
+## 模拟座舱确认
+
+`control_confirmation_required`：
+
+```json
+{
+  "confirmationId": "confirm-001",
+  "description": "打开空调，将温度设置为 24°C",
+  "expiresAtEpochMillis": 1792466400000
+}
+```
+
+`control_confirmation_response`：
+
+```json
+{"confirmationId":"confirm-001","confirmed":true}
+```
+
+确认标识只能使用一次，并绑定创建它的 `conversationId`。无效、重复和过期确认分别返回稳定错误事件；取消和错误均不修改状态。
+
+`simulated_cockpit_state`：
+
+```json
+{
+  "acEnabled": true,
+  "targetTemperature": 24.0,
+  "fanLevel": 1,
+  "frontDefrostEnabled": false,
+  "driverWindowPercent": 0,
+  "passengerWindowPercent": 0
+}
+```
+
+状态按 `conversationId` 隔离且只保存在服务端内存中。
 
 ## ChatRequest
 
@@ -113,11 +151,10 @@ WebSocket 事件后续统一使用以下信封：
 
 ```json
 {
-  "requestId": "req-20261019-001",
   "callId": "call-001",
-  "toolName": "control_air_conditioner",
+  "toolName": "simulated_cockpit_control",
   "status": "RUNNING",
-  "message": "正在更新模拟空调状态"
+  "message": "模拟座舱控制已完成"
 }
 ```
 

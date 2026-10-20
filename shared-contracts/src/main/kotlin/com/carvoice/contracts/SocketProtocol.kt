@@ -10,6 +10,9 @@ object SocketEventType {
     const val ASSISTANT_COMPLETED = "assistant_completed"
     const val ERROR = "error"
     const val TOOL_PROGRESS = "tool_progress"
+    const val CONTROL_CONFIRMATION_REQUIRED = "control_confirmation_required"
+    const val CONTROL_CONFIRMATION_RESPONSE = "control_confirmation_response"
+    const val SIMULATED_COCKPIT_STATE = "simulated_cockpit_state"
 }
 
 object ChatProtocol {
@@ -49,4 +52,35 @@ data class SocketErrorPayload(
     val code: String,
     val message: String,
     val retryable: Boolean = false,
+)
+
+@Serializable
+data class ControlConfirmationRequiredPayload(
+    val confirmationId: String,
+    val description: String,
+    val expiresAtEpochMillis: Long,
+)
+
+@Serializable
+data class ControlConfirmationResponsePayload(
+    val confirmationId: String,
+    val confirmed: Boolean,
+)
+
+@Serializable
+data class ToolProgressPayload(
+    val callId: String,
+    val toolName: String,
+    val status: ToolCallStatus,
+    val message: String,
+)
+
+@Serializable
+data class SimulatedCockpitStatePayload(
+    val acEnabled: Boolean = false,
+    val targetTemperature: Float = 24f,
+    val fanLevel: Int = 1,
+    val frontDefrostEnabled: Boolean = false,
+    val driverWindowPercent: Int = 0,
+    val passengerWindowPercent: Int = 0,
 )

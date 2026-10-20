@@ -3,10 +3,10 @@
 ## 风险规则
 
 - **只读**：不改变任何状态，不需要二次确认。
-- **低风险执行**：仅改变可逆的模拟座舱状态；显式用户指令下无需二次确认，但仍需参数、权限和审计检查。
+- **低风险执行**：仅改变可逆的模拟座舱状态；本阶段仍统一要求二次确认。
 - **高风险执行**：可能影响乘员安全或环境，必须展示标准化参数并获得二次确认。
 
-第 1 阶段仅定义工具，不执行任何调用。后续首期的车辆状态与控制工具只能调用 `MockVehicleTool`，不得连接 Vehicle HAL、CAN 总线或真实车辆。Koog 只能提出工具调用，不能绕过 `ToolRegistry`。
+当前阶段由 `SimulatedCockpitTask` 执行内存态模拟控制，不得连接 Vehicle HAL、CAN 总线、Car API 或真实车辆。Koog 只做意图分类与普通聊天，不能绕过确定性 `TaskRouter`。
 
 ## 工具定义
 
@@ -25,13 +25,13 @@
 - **输入参数**：`action: "turn_on" | "turn_off" | "set"`；可选 `targetTemperatureC: number`、`fanLevel: integer`、`mode: string`。
 - **返回结果**：`previousState: object`、`currentState: object`、`applied: boolean`。
 - **风险等级**：低风险执行。
-- **二次确认**：否；参数必须在配置的安全范围内。
-- **执行边界**：仅修改 `MockVehicleTool` 的模拟状态。
+- **二次确认**：是；确认前不得修改状态。
+- **执行边界**：仅修改按 `conversationId` 隔离的服务端内存状态。温度范围 16–30°C，风量范围 1–7。
 
 ### `control_window`
 
 - **用途**：调整指定模拟车窗的位置。
-- **输入参数**：`window: "driver" | "passenger" | "rear_left" | "rear_right"`、`positionPercent: integer (0..100)`。
+- **输入参数**：`window: "driver" | "passenger"`、`positionPercent: integer (0..100)`。
 - **返回结果**：`window: string`、`previousPositionPercent: integer`、`currentPositionPercent: integer`、`applied: boolean`。
 - **风险等级**：高风险执行。
 - **二次确认**：是，每次执行都需要确认目标车窗和位置。
@@ -39,21 +39,21 @@
 
 ### `start_navigation`
 
-- **用途**：启动到指定目的地的模拟导航。
+- **用途**：识别导航目的地并返回未接入提示。
 - **输入参数**：`destination: string`；可选 `latitude: number`、`longitude: number`、`routePreference: string`。
 - **返回结果**：`navigationId: string`、`resolvedDestination: string`、`status: string`。
 - **风险等级**：低风险执行。
 - **二次确认**：否；目的地不明确时必须先追问，而非猜测。
-- **执行边界**：首期只调用模拟导航适配器，不启动真实导航应用。
+- **执行边界**：本阶段不执行导航、不启动 App、不调用地图 API；仅预留 `ClientAction.Navigate`。
 
 ### `control_media`
 
-- **用途**：控制模拟媒体播放。
+- **用途**：识别歌曲、歌手或专辑并返回未接入提示。
 - **输入参数**：`action: "play" | "pause" | "next" | "previous" | "set_volume"`；`volumePercent: integer (0..100)` 仅用于音量操作。
 - **返回结果**：`previousState: object`、`currentState: object`、`applied: boolean`。
 - **风险等级**：低风险执行。
 - **二次确认**：否。
-- **执行边界**：首期只修改模拟媒体状态，不调用车机媒体会话。
+- **执行边界**：本阶段不播放媒体、不启动 App、不调用第三方服务；仅预留 `ClientAction.PlayMedia`。
 
 ### `search_vehicle_manual`
 
@@ -66,4 +66,4 @@
 
 ## 通用执行要求
 
-每次调用都必须携带 `requestId`、`callId` 和调用方身份。执行顺序固定为：工具白名单校验、Schema 校验、风险分级、用户确认（如需）、权限校验、执行、审计。失败必须返回结构化错误，不能伪装为成功结果。
+模拟座舱执行顺序固定为：参数校验、生成一次性确认标识、用户确认、再次校验会话/有效期、更新状态、发送完整状态。失败必须返回结构化错误，不能伪装为成功结果。持久化、权限和审计将在后续阶段接入。

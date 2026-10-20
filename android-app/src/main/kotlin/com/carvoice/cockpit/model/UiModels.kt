@@ -33,6 +33,17 @@ data class VehicleActionUi(
     val title: String,
     val description: String,
     val riskMessage: String,
+    val confirmationId: String = "",
+    val conversationId: String = "",
+)
+
+data class SimulatedCockpitStateUi(
+    val acEnabled: Boolean,
+    val targetTemperature: Float,
+    val fanLevel: Int,
+    val frontDefrostEnabled: Boolean,
+    val driverWindowPercent: Int,
+    val passengerWindowPercent: Int,
 )
 
 data class ConversationErrorUi(

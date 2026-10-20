@@ -3,6 +3,10 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+val configuredAgentWsUrl = providers.gradleProperty("agentWsUrl")
+fun String.asBuildConfigString(): String =
+    "\"${replace("\\", "\\\\").replace("\"", "\\\"")}\""
+
 android {
     namespace = "com.carvoice.cockpit"
     compileSdk = 37
@@ -15,12 +19,21 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        buildConfigField("String", "CHAT_WS_URL", "\"wss://localhost/ws/chat\"")
+        // Release builds must receive a deployed, TLS-protected endpoint via
+        // -PagentWsUrl=wss://agent.example.com/ws/chat.  An empty value makes
+        // a missing deployment configuration explicit instead of connecting to
+        // the car device's own localhost on port 443.
+        buildConfigField("String", "CHAT_WS_URL", configuredAgentWsUrl.orElse("").get().asBuildConfigString())
     }
 
     buildTypes {
         debug {
-            buildConfigField("String", "CHAT_WS_URL", "\"ws://10.0.2.2:8081/ws/chat\"")
+            // 10.0.2.2 resolves to the development host from an Android Emulator.
+            buildConfigField(
+                "String",
+                "CHAT_WS_URL",
+                configuredAgentWsUrl.orElse("ws://10.0.2.2:8081/ws/chat").get().asBuildConfigString(),
+            )
         }
         release {
             optimization {

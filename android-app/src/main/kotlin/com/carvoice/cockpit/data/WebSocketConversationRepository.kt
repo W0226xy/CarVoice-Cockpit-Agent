@@ -3,9 +3,13 @@ package com.carvoice.cockpit.data
 import com.carvoice.cockpit.model.ConnectionState
 import com.carvoice.contracts.AssistantDeltaPayload
 import com.carvoice.contracts.ChatRequestPayload
+import com.carvoice.contracts.ControlConfirmationRequiredPayload
+import com.carvoice.contracts.ControlConfirmationResponsePayload
+import com.carvoice.contracts.SimulatedCockpitStatePayload
 import com.carvoice.contracts.SocketErrorPayload
 import com.carvoice.contracts.SocketEvent
 import com.carvoice.contracts.SocketEventType
+import com.carvoice.contracts.ToolProgressPayload
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.mapNotNull
@@ -68,6 +72,49 @@ class WebSocketConversationRepository(
                     )
                 }
 
+                SocketEventType.CONTROL_CONFIRMATION_REQUIRED -> {
+                    val requestId = event.requestId ?: return@mapNotNull malformedEvent(event)
+                    val conversationId =
+                        event.conversationId ?: return@mapNotNull malformedEvent(event)
+                    val payload = event.decodePayload<ControlConfirmationRequiredPayload>()
+                        ?: return@mapNotNull malformedEvent(event)
+                    ConversationStreamEvent.ControlConfirmationRequired(
+                        requestId,
+                        conversationId,
+                        payload.confirmationId,
+                        payload.description,
+                        payload.expiresAtEpochMillis,
+                    )
+                }
+
+                SocketEventType.TOOL_PROGRESS -> {
+                    val requestId = event.requestId ?: return@mapNotNull malformedEvent(event)
+                    val conversationId =
+                        event.conversationId ?: return@mapNotNull malformedEvent(event)
+                    val payload = event.decodePayload<ToolProgressPayload>()
+                        ?: return@mapNotNull malformedEvent(event)
+                    ConversationStreamEvent.ToolProgress(
+                        requestId,
+                        conversationId,
+                        payload.callId,
+                        payload.status,
+                        payload.message,
+                    )
+                }
+
+                SocketEventType.SIMULATED_COCKPIT_STATE -> {
+                    val requestId = event.requestId ?: return@mapNotNull malformedEvent(event)
+                    val conversationId =
+                        event.conversationId ?: return@mapNotNull malformedEvent(event)
+                    val payload = event.decodePayload<SimulatedCockpitStatePayload>()
+                        ?: return@mapNotNull malformedEvent(event)
+                    ConversationStreamEvent.SimulatedCockpitState(
+                        requestId,
+                        conversationId,
+                        payload,
+                    )
+                }
+
                 else -> null
             }
         }
@@ -87,6 +134,22 @@ class WebSocketConversationRepository(
         ),
     )
 
+    override suspend fun sendControlConfirmation(
+        conversationId: String,
+        requestId: String,
+        confirmationId: String,
+        confirmed: Boolean,
+    ): Result<Unit> = connection.send(
+        SocketEvent(
+            type = SocketEventType.CONTROL_CONFIRMATION_RESPONSE,
+            requestId = requestId,
+            conversationId = conversationId,
+            payload = json.encodeToJsonElement(
+                ControlConfirmationResponsePayload(confirmationId, confirmed),
+            ),
+        ),
+    )
+
     override fun close() = connection.close()
 
     private fun malformedEvent(event: SocketEvent) = ConversationStreamEvent.Error(
@@ -96,4 +159,7 @@ class WebSocketConversationRepository(
         message = "服务返回了无法识别的消息。",
         retryable = true,
     )
+
+    private inline fun <reified T> SocketEvent.decodePayload(): T? =
+        payload?.let { runCatching { json.decodeFromJsonElement<T>(it) }.getOrNull() }
 }

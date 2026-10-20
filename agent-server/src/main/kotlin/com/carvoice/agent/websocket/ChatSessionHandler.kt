@@ -63,7 +63,11 @@ class ChatSessionHandler(
                     )
                     continue
                 }
-                if (event.type != SocketEventType.CHAT_REQUEST) {
+                if (event.type !in setOf(
+                        SocketEventType.CHAT_REQUEST,
+                        SocketEventType.CONTROL_CONFIRMATION_RESPONSE,
+                    )
+                ) {
                     emit(
                         conversationService.errorEvent(
                             event.requestId,
@@ -87,7 +91,12 @@ class ChatSessionHandler(
                     continue
                 }
                 activeJob = launch {
-                    conversationService.handleChat(event, history, ::emit)
+                    when (event.type) {
+                        SocketEventType.CHAT_REQUEST ->
+                            conversationService.handleChat(event, history, ::emit)
+                        SocketEventType.CONTROL_CONFIRMATION_RESPONSE ->
+                            conversationService.handleControlConfirmation(event, history, ::emit)
+                    }
                 }
             }
         } finally {

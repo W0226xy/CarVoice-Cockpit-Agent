@@ -45,7 +45,7 @@ fun ToolExecutionCard(
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(text = state.title, style = MaterialTheme.typography.titleMedium)
                 Text(
-                    text = "安全工具调用 · 本地演示",
+                    text = "模拟座舱 · 服务端内存态",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodyMedium,
                 )

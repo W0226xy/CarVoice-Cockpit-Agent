@@ -2,6 +2,7 @@ package com.carvoice.contracts
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.encodeToJsonElement
 
@@ -37,5 +38,53 @@ class ContractSerializationTest {
         assertEquals(SocketEventType.CHAT_REQUEST, decoded.type)
         assertEquals("request-1", decoded.requestId)
         assertEquals("conversation-1", decoded.conversationId)
+    }
+
+    @Test
+    fun `intent result validates confidence and round trips slots`() {
+        val result = IntentResult(
+            IntentType.NAVIGATION,
+            0.92,
+            mapOf("destination" to "扬州大学"),
+        )
+
+        assertEquals(result, Json.decodeFromString<IntentResult>(Json.encodeToString(result)))
+        assertFailsWith<IllegalArgumentException> {
+            IntentResult(IntentType.UNKNOWN, 1.1)
+        }
+    }
+
+    @Test
+    fun `cockpit protocol payloads round trip`() {
+        val confirmation = ControlConfirmationRequiredPayload("confirm-1", "打开空调", 1234)
+        val response = ControlConfirmationResponsePayload("confirm-1", true)
+        val progress = ToolProgressPayload(
+            "confirm-1",
+            "simulated_cockpit_control",
+            ToolCallStatus.COMPLETED,
+            "模拟座舱控制已完成",
+        )
+        val state = SimulatedCockpitStatePayload(acEnabled = true, targetTemperature = 24f)
+
+        assertEquals(
+            confirmation,
+            Json.decodeFromString<ControlConfirmationRequiredPayload>(
+                Json.encodeToString(confirmation),
+            ),
+        )
+        assertEquals(
+            response,
+            Json.decodeFromString<ControlConfirmationResponsePayload>(
+                Json.encodeToString(response),
+            ),
+        )
+        assertEquals(
+            progress,
+            Json.decodeFromString<ToolProgressPayload>(Json.encodeToString(progress)),
+        )
+        assertEquals(
+            state,
+            Json.decodeFromString<SimulatedCockpitStatePayload>(Json.encodeToString(state)),
+        )
     }
 }

@@ -5,6 +5,7 @@ import com.carvoice.cockpit.data.ConversationStreamEvent
 import com.carvoice.cockpit.model.ConnectionState
 import com.carvoice.cockpit.model.MessageAuthor
 import com.carvoice.cockpit.model.WorkspaceDestination
+import com.carvoice.contracts.SimulatedCockpitStatePayload
 import com.carvoice.cockpit.ui.conversation.ConversationViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -265,6 +266,107 @@ class ConversationViewModelTest {
         assertEquals(WorkspaceDestination.CONVERSATION, viewModel.uiState.value.destination)
         assertNotNull(viewModel.uiState.value.activeSession)
     }
+
+    @Test
+    fun `confirmation event is sent only after user confirms`() = runBlocking {
+        val repository = FakeConversationRepository()
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default)
+        delay(50)
+        val conversationId = viewModel.uiState.value.activeSessionId
+        repository.emit(
+            ConversationStreamEvent.ControlConfirmationRequired(
+                "request-1",
+                conversationId,
+                "confirmation-1",
+                "打开空调",
+                System.currentTimeMillis() + 60_000,
+            ),
+        )
+        delay(50)
+
+        assertEquals("模拟座舱确认", viewModel.uiState.value.pendingVehicleAction?.title)
+        assertTrue(repository.confirmations.isEmpty())
+        viewModel.confirmVehicleAction()
+        delay(50)
+
+        assertTrue(repository.confirmations.single().confirmed)
+        assertEquals("confirmation-1", repository.confirmations.single().confirmationId)
+        assertNull(viewModel.uiState.value.pendingVehicleAction)
+    }
+
+    @Test
+    fun `cancelling confirmation sends negative response`() = runBlocking {
+        val repository = FakeConversationRepository()
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default)
+        delay(50)
+        val conversationId = viewModel.uiState.value.activeSessionId
+        repository.emit(
+            ConversationStreamEvent.ControlConfirmationRequired(
+                "request-1",
+                conversationId,
+                "confirmation-1",
+                "打开空调",
+                System.currentTimeMillis() + 60_000,
+            ),
+        )
+        delay(50)
+
+        viewModel.cancelVehicleAction()
+        delay(50)
+
+        assertFalse(repository.confirmations.single().confirmed)
+    }
+
+    @Test
+    fun `cockpit state update is isolated by conversation`() = runBlocking {
+        val repository = FakeConversationRepository()
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default)
+        delay(50)
+        val firstConversation = viewModel.uiState.value.activeSessionId
+        repository.emit(
+            ConversationStreamEvent.SimulatedCockpitState(
+                "request-1",
+                firstConversation,
+                SimulatedCockpitStatePayload(acEnabled = true, targetTemperature = 24f),
+            ),
+        )
+        delay(50)
+        assertTrue(viewModel.uiState.value.simulatedCockpitState?.acEnabled == true)
+
+        viewModel.startNewConversation()
+
+        assertNull(viewModel.uiState.value.simulatedCockpitState)
+    }
+
+    @Test
+    fun `confirmation error clears pending action`() = runBlocking {
+        val repository = FakeConversationRepository()
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default)
+        delay(50)
+        val conversationId = viewModel.uiState.value.activeSessionId
+        repository.emit(
+            ConversationStreamEvent.ControlConfirmationRequired(
+                "request-1",
+                conversationId,
+                "confirmation-1",
+                "打开空调",
+                System.currentTimeMillis() + 60_000,
+            ),
+        )
+        repository.emit(
+            ConversationStreamEvent.Error(
+                "request-1",
+                conversationId,
+                "INVALID_CONFIRMATION",
+                "确认请求无效",
+                false,
+            ),
+        )
+        delay(50)
+
+        assertNull(viewModel.uiState.value.pendingVehicleAction)
+        assertEquals("确认请求无效", viewModel.uiState.value.error?.message)
+    }
 }
 
 private class FakeConversationRepository : ConversationRepository {
@@ -278,6 +380,13 @@ private class FakeConversationRepository : ConversationRepository {
     private val eventFlow = MutableSharedFlow<ConversationStreamEvent>(extraBufferCapacity = 16)
     override val events: Flow<ConversationStreamEvent> = eventFlow
     val sent = mutableListOf<SentMessage>()
+    data class Confirmation(
+        val conversationId: String,
+        val requestId: String,
+        val confirmationId: String,
+        val confirmed: Boolean,
+    )
+    val confirmations = mutableListOf<Confirmation>()
 
     override fun connect() = Unit
 
@@ -287,6 +396,16 @@ private class FakeConversationRepository : ConversationRepository {
         message: String,
     ): Result<Unit> {
         sent += SentMessage(conversationId, requestId, message)
+        return Result.success(Unit)
+    }
+
+    override suspend fun sendControlConfirmation(
+        conversationId: String,
+        requestId: String,
+        confirmationId: String,
+        confirmed: Boolean,
+    ): Result<Unit> {
+        confirmations += Confirmation(conversationId, requestId, confirmationId, confirmed)
         return Result.success(Unit)
     }
 
