@@ -11,10 +11,15 @@ import kotlinx.serialization.json.Json
 class FakeCarVoiceAgent(
     private val replyChunks: List<String> = listOf("测试回复"),
 ) : CarVoiceAgent {
+    val receivedHistories = mutableListOf<List<ConversationTurn>>()
+
     override fun streamReply(
         history: List<ConversationTurn>,
         message: String,
-    ): Flow<String> = flowOf(*replyChunks.toTypedArray())
+    ): Flow<String> {
+        receivedHistories += history
+        return flowOf(*replyChunks.toTypedArray())
+    }
 
     override suspend fun classifyIntent(message: String): String {
         val intent = when {

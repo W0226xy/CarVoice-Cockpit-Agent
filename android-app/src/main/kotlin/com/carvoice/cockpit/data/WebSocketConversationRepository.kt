@@ -12,6 +12,9 @@ import com.carvoice.contracts.SocketEventType
 import com.carvoice.contracts.ToolProgressPayload
 import com.carvoice.contracts.WebSearchSourcesPayload
 import com.carvoice.contracts.WebSearchSourcePayload
+import com.carvoice.contracts.ConversationSyncPayload
+import com.carvoice.contracts.ConversationSyncMessage as ProtocolSyncMessage
+import com.carvoice.contracts.ConversationSyncRole
 import java.net.URI
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
@@ -178,6 +181,33 @@ class WebSocketConversationRepository(
             ),
         ),
     )
+
+    override suspend fun syncConversation(
+        conversationId: String,
+        messages: List<ConversationSyncMessage>,
+    ): Result<Unit> {
+        if (messages.size > 20 || messages.any { it.content.isBlank() || it.content.length > 4_000 }) {
+            return Result.failure(IllegalArgumentException("Invalid conversation sync payload"))
+        }
+        return connection.send(
+            SocketEvent(
+                type = SocketEventType.CONVERSATION_SYNC,
+                conversationId = conversationId,
+                payload = json.encodeToJsonElement(
+                    ConversationSyncPayload(messages.map {
+                        ProtocolSyncMessage(
+                            role = if (it.author == com.carvoice.cockpit.model.MessageAuthor.USER) {
+                                ConversationSyncRole.USER
+                            } else {
+                                ConversationSyncRole.ASSISTANT
+                            },
+                            content = it.content,
+                        )
+                    }),
+                ),
+            ),
+        )
+    }
 
     override fun close() = connection.close()
 

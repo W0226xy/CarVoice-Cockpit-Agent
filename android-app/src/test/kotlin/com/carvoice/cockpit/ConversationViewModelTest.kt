@@ -549,6 +549,11 @@ private class FakeConversationRepository : ConversationRepository {
         return Result.success(Unit)
     }
 
+    override suspend fun syncConversation(
+        conversationId: String,
+        messages: List<com.carvoice.cockpit.data.ConversationSyncMessage>,
+    ): Result<Unit> = Result.success(Unit)
+
     suspend fun emit(event: ConversationStreamEvent) {
         eventFlow.emit(event)
     }

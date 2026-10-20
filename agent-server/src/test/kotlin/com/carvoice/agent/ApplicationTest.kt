@@ -20,6 +20,9 @@ import com.carvoice.contracts.SocketEventType
 import com.carvoice.contracts.ToolCallStatus
 import com.carvoice.contracts.ToolProgressPayload
 import com.carvoice.contracts.WebSearchSourcesPayload
+import com.carvoice.contracts.ConversationSyncPayload
+import com.carvoice.contracts.ConversationSyncMessage
+import com.carvoice.contracts.ConversationSyncRole
 import io.ktor.client.call.body
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.websocket.WebSockets
@@ -105,6 +108,44 @@ class ApplicationTest {
             }
             assertTrue(events.any { it.type == SocketEventType.ASSISTANT_DELTA })
             assertEquals(SocketEventType.ASSISTANT_COMPLETED, events.last().type)
+        }
+    }
+
+    @Test
+    fun `conversation sync is idempotent isolated and validates limits`() = testApplication {
+        val historyAgent = FakeCarVoiceAgent(listOf("ok"))
+        application { module(config, historyAgent, tavilyConfig) }
+        val client = createClient { install(WebSockets) }
+        client.webSocket("/ws/chat") {
+            receiveEvent()
+            val snapshot = ConversationSyncPayload(
+                listOf(
+                    ConversationSyncMessage(ConversationSyncRole.USER, "old user"),
+                    ConversationSyncMessage(ConversationSyncRole.ASSISTANT, "old assistant"),
+                ),
+            )
+            repeat(2) {
+                send(Frame.Text(codec.encode(SocketEvent(
+                    SocketEventType.CONVERSATION_SYNC,
+                    conversationId = "one",
+                    payload = codec.json.encodeToJsonElement(snapshot),
+                ))))
+            }
+            send(Frame.Text(codec.encode(SocketEvent(
+                SocketEventType.CHAT_REQUEST, "r1", "one",
+                codec.json.encodeToJsonElement(ChatRequestPayload("new")),
+            ))))
+            while (receiveEvent().type != SocketEventType.ASSISTANT_COMPLETED) Unit
+            assertEquals(listOf("old user", "old assistant"), historyAgent.receivedHistories.single().map { it.content })
+
+            send(Frame.Text(codec.encode(SocketEvent(
+                SocketEventType.CONVERSATION_SYNC,
+                conversationId = "two",
+                payload = codec.json.encodeToJsonElement(ConversationSyncPayload(List(21) {
+                    ConversationSyncMessage(ConversationSyncRole.USER, "x")
+                })),
+            ))))
+            assertErrorCode("INVALID_SYNC")
         }
     }
 

@@ -12,13 +12,22 @@ enum class MessageAuthor {
     AGENT,
 }
 
+enum class MessageStatus {
+    SENDING,
+    STREAMING,
+    COMPLETED,
+    FAILED,
+}
+
 data class ChatMessage(
-    val id: Long,
+    val id: String,
     val author: MessageAuthor,
     val content: String,
     val serverMessageId: String? = null,
     val searchQuery: String? = null,
     val sources: List<WebSearchSourceUi> = emptyList(),
+    val status: MessageStatus = MessageStatus.COMPLETED,
+    val createdAt: Long = 0L,
 )
 
 data class WebSearchSourceUi(
@@ -79,9 +88,13 @@ data class ConversationSession(
     val title: String,
     val updatedAtLabel: String,
     val messages: List<ChatMessage>,
+    val createdAt: Long = 0L,
+    val updatedAt: Long = 0L,
+    /** Conversation rows are only created with the first user message. */
+    val persisted: Boolean = false,
 ){
     val hasUserMessage: Boolean
-        get() = messages.any { it.author == MessageAuthor.USER }
+        get() = persisted || messages.any { it.author == MessageAuthor.USER }
 }
 
 data class ChatHistoryItem(

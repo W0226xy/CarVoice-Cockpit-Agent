@@ -27,6 +27,8 @@ import com.carvoice.cockpit.BuildConfig
 import com.carvoice.cockpit.data.AgentConnection
 import com.carvoice.cockpit.data.AgentConnectionConfig
 import com.carvoice.cockpit.data.WebSocketConversationRepository
+import com.carvoice.cockpit.data.local.CarVoiceDatabase
+import com.carvoice.cockpit.data.local.RoomConversationHistoryRepository
 import com.carvoice.cockpit.model.WorkspaceDestination
 import com.carvoice.cockpit.ui.conversation.ConversationScreen
 import com.carvoice.cockpit.ui.conversation.ConversationUiState
@@ -47,11 +49,12 @@ fun CarVoiceApp(
     val resolvedLinkOpener = remember(externalLinkOpener, context) {
         externalLinkOpener ?: AndroidExternalLinkOpener(context)
     }
-    val defaultFactory = remember {
+    val defaultFactory = remember(context) {
         ConversationViewModelFactory(
             WebSocketConversationRepository(
                 AgentConnection(AgentConnectionConfig(BuildConfig.CHAT_WS_URL)),
             ),
+            RoomConversationHistoryRepository(CarVoiceDatabase.create(context)),
         )
     }
     val resolvedViewModel = conversationViewModel ?: viewModel(factory = defaultFactory)

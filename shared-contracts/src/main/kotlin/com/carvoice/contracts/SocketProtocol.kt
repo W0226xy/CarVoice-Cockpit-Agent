@@ -14,10 +14,30 @@ object SocketEventType {
     const val CONTROL_CONFIRMATION_RESPONSE = "control_confirmation_response"
     const val SIMULATED_COCKPIT_STATE = "simulated_cockpit_state"
     const val WEB_SEARCH_SOURCES = "web_search_sources"
+    const val CONVERSATION_SYNC = "conversation_sync"
 }
 
 object ChatProtocol {
     const val MAX_MESSAGE_LENGTH = 4_000
+    const val MAX_SYNC_MESSAGES = 20
+}
+
+/** A deliberately small, client-owned history projection used after reconnecting. */
+@Serializable
+data class ConversationSyncPayload(
+    val messages: List<ConversationSyncMessage>,
+)
+
+@Serializable
+data class ConversationSyncMessage(
+    val role: ConversationSyncRole,
+    val content: String,
+)
+
+@Serializable
+enum class ConversationSyncRole {
+    USER,
+    ASSISTANT,
 }
 
 @Serializable

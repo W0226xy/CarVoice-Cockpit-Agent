@@ -18,6 +18,8 @@ import com.carvoice.contracts.SocketEventType
 import com.carvoice.contracts.ToolCallStatus
 import com.carvoice.contracts.ToolProgressPayload
 import com.carvoice.contracts.WebSearchSourcesPayload
+import com.carvoice.contracts.ConversationSyncPayload
+import com.carvoice.contracts.ConversationSyncRole
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.collect
 import kotlinx.serialization.json.Json
@@ -30,6 +32,42 @@ class ConversationService(
     private val taskRouter: TaskRouter,
     private val json: Json,
 ) {
+    /** Replaces, rather than appends, a conversation snapshot so reconnects are idempotent. */
+    suspend fun handleConversationSync(
+        event: SocketEvent,
+        sessionHistory: MutableMap<String, MutableList<ConversationTurn>>,
+        emit: suspend (SocketEvent) -> Unit,
+    ) {
+        val conversationId = event.conversationId
+        if (conversationId.isNullOrBlank()) {
+            emit(errorEvent(event.requestId, conversationId, "INVALID_SYNC", "缺少会话标识。"))
+            return
+        }
+        val payload = runCatching {
+            event.payload?.let { json.decodeFromJsonElement<ConversationSyncPayload>(it) }
+        }.getOrNull()
+        val items = payload?.messages
+        if (items == null || items.size > ChatProtocol.MAX_SYNC_MESSAGES) {
+            emit(errorEvent(event.requestId, conversationId, "INVALID_SYNC", "会话同步最多包含 20 条消息。"))
+            return
+        }
+        if (items.any { it.content.isBlank() || it.content.length > ChatProtocol.MAX_MESSAGE_LENGTH }) {
+            emit(errorEvent(event.requestId, conversationId, "INVALID_SYNC", "会话同步消息内容无效。"))
+            return
+        }
+        // The protocol enum is closed: system/tool/internal roles cannot be encoded here.
+        val restored = items.map { item ->
+            ConversationTurn(
+                when (item.role) {
+                    ConversationSyncRole.USER -> ConversationRole.USER
+                    ConversationSyncRole.ASSISTANT -> ConversationRole.ASSISTANT
+                },
+                item.content,
+            )
+        }.takeLast(40)
+        sessionHistory[conversationId] = restored.toMutableList()
+    }
+
     suspend fun handleChat(
         event: SocketEvent,
         sessionHistory: MutableMap<String, MutableList<ConversationTurn>>,

@@ -232,9 +232,9 @@ private fun ConversationScreenPreview() {
                         title = "车辆状态",
                         updatedAtLabel = "刚刚",
                         messages = listOf(
-                            ChatMessage(1, MessageAuthor.USER, "当前车辆状态怎么样？"),
+                            ChatMessage("1", MessageAuthor.USER, "当前车辆状态怎么样？"),
                             ChatMessage(
-                                2,
+                                "2",
                                 MessageAuthor.AGENT,
                                 "当前为模拟车辆数据：\n剩余续航 428 km，车内温度 24 ℃，胎压正常。",
                             ),

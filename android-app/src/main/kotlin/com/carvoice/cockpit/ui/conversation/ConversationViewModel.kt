@@ -3,12 +3,15 @@ package com.carvoice.cockpit.ui.conversation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.carvoice.cockpit.data.ConversationRepository
+import com.carvoice.cockpit.data.ConversationHistoryRepository
+import com.carvoice.cockpit.data.ConversationSyncMessage
 import com.carvoice.cockpit.data.ConversationStreamEvent
 import com.carvoice.cockpit.model.ChatMessage
 import com.carvoice.cockpit.model.ConnectionState
 import com.carvoice.cockpit.model.ConversationErrorUi
 import com.carvoice.cockpit.model.ConversationSession
 import com.carvoice.cockpit.model.MessageAuthor
+import com.carvoice.cockpit.model.MessageStatus
 import com.carvoice.cockpit.model.QuickAction
 import com.carvoice.cockpit.model.QuickActionType
 import com.carvoice.cockpit.model.SimulatedCockpitStateUi
@@ -25,20 +28,28 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.emptyFlow
 import com.carvoice.contracts.ToolCallStatus
 
 class ConversationViewModel(
     private val repository: ConversationRepository,
     private val workerDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
+    private val historyRepository: ConversationHistoryRepository = EmptyConversationHistoryRepository,
 ) : ViewModel() {
     private val _uiState = kotlinx.coroutines.flow.MutableStateFlow(ConversationUiState())
     val uiState: kotlinx.coroutines.flow.StateFlow<ConversationUiState> =
         _uiState.asStateFlow()
 
-    private var nextMessageId = 100L
+    private var activeMessagesJob: Job? = null
+    private val syncedConversationIds = mutableSetOf<String>()
 
     init {
         repository.connect()
+        viewModelScope.launch(workerDispatcher) {
+            historyRepository.observeSessions().collect(::applyPersistedSessions)
+        }
+        observeActiveMessages(_uiState.value.activeSessionId)
         viewModelScope.launch(workerDispatcher) {
             repository.connectionState.collect { connectionState ->
                 _uiState.update {
@@ -79,8 +90,11 @@ class ConversationViewModel(
                         } else {
                             emptyMap()
                         },
-                    )
+                    ).also {
+                        if (connectionState != ConnectionState.CONNECTED) syncedConversationIds.clear()
+                    }
                 }
+                if (connectionState == ConnectionState.CONNECTED) syncActiveConversation()
             }
         }
         viewModelScope.launch(workerDispatcher) {
@@ -119,7 +133,14 @@ class ConversationViewModel(
 
         val sessionId = state.activeSessionId
         val requestId = UUID.randomUUID().toString()
-        val userMessage = ChatMessage(nextMessageId++, MessageAuthor.USER, message)
+        val now = System.currentTimeMillis()
+        val userMessage = ChatMessage(
+            id = UUID.randomUUID().toString(),
+            author = MessageAuthor.USER,
+            content = message,
+            status = MessageStatus.COMPLETED,
+            createdAt = now,
+        )
         _uiState.update {
             it.copy(
                 sessions = it.sessions.updateSession(sessionId) { session ->
@@ -130,6 +151,7 @@ class ConversationViewModel(
                             session.title
                         },
                         updatedAtLabel = "刚刚",
+                        updatedAt = now,
                         messages = session.messages + userMessage,
                     )
                 },
@@ -146,6 +168,8 @@ class ConversationViewModel(
         }
 
         viewModelScope.launch(workerDispatcher) {
+            val session = _uiState.value.sessions.first { it.id == sessionId }
+            historyRepository.saveUserMessage(session, userMessage)
             repository.sendMessage(sessionId, requestId, message)
                 .onFailure {
                     showError("消息发送失败，请检查连接后重试。", retryable = true)
@@ -186,6 +210,8 @@ class ConversationViewModel(
                 pendingSearchSources = emptyMap(),
             )
         }
+        observeActiveMessages(sessionId)
+        syncActiveConversation()
     }
 
     fun openKnowledgeBase() {
@@ -228,6 +254,7 @@ class ConversationViewModel(
                 pendingSearchSources = emptyMap(),
             )
         }
+        observeActiveMessages(newSession.id)
     }
 
     fun requestDeleteConversation(sessionId: String) {
@@ -278,6 +305,8 @@ class ConversationViewModel(
                 pendingSearchSources = emptyMap(),
             )
         }
+        viewModelScope.launch(workerDispatcher) { historyRepository.deleteConversation(targetId) }
+        observeActiveMessages(nextSession.id)
     }
 
     override fun onCleared() {
@@ -442,7 +471,7 @@ class ConversationViewModel(
             return
         }
 
-        val assistantId = state.activeAssistantMessageId ?: nextMessageId++
+        val assistantId = state.activeAssistantMessageId ?: UUID.randomUUID().toString()
         val pendingSources = state.pendingSearchSources[event.requestId]
         _uiState.update {
             it.copy(
@@ -453,7 +482,10 @@ class ConversationViewModel(
                     val messages = if (existing >= 0) {
                         session.messages.map { message ->
                             if (message.id == assistantId) {
-                                message.copy(content = message.content + event.text)
+                                message.copy(
+                                    content = message.content + event.text,
+                                    status = MessageStatus.STREAMING,
+                                )
                             } else {
                                 message
                             }
@@ -466,6 +498,8 @@ class ConversationViewModel(
                             serverMessageId = event.requestId,
                             searchQuery = pendingSources?.query,
                             sources = pendingSources?.sources.orEmpty(),
+                            status = MessageStatus.STREAMING,
+                            createdAt = System.currentTimeMillis(),
                         )
                     }
                     session.copy(messages = messages, updatedAtLabel = "刚刚")
@@ -483,8 +517,20 @@ class ConversationViewModel(
         ) {
             return
         }
+        val assistant = state.sessions.firstOrNull { it.id == event.conversationId }
+            ?.messages?.firstOrNull { it.id == state.activeAssistantMessageId }
+        val pendingSources = state.pendingSearchSources[event.requestId]
+            ?: assistant?.searchQuery?.let { query ->
+                WebSearchSourcesUi(query, assistant.sources)
+            }
         _uiState.update {
+            val sessions = it.sessions.updateSession(event.conversationId) { session ->
+                session.copy(messages = session.messages.map { message ->
+                    if (message.id == assistant?.id) message.copy(status = MessageStatus.COMPLETED) else message
+                })
+            }
             it.copy(
+                sessions = sessions,
                 respondingSessionId = null,
                 activeRequestId = null,
                 activeAssistantMessageId = null,
@@ -493,11 +539,29 @@ class ConversationViewModel(
                 pendingSearchSources = it.pendingSearchSources - event.requestId,
             )
         }
+        if (assistant != null && assistant.content.isNotBlank()) {
+            viewModelScope.launch(workerDispatcher) {
+                historyRepository.saveCompletedAssistant(
+                    event.conversationId,
+                    assistant.copy(status = MessageStatus.COMPLETED),
+                    pendingSources,
+                )
+            }
+        }
     }
 
     private fun showError(message: String, retryable: Boolean) {
+        val state = _uiState.value
+        val assistant = state.sessions.firstOrNull { it.id == state.respondingSessionId }
+            ?.messages?.firstOrNull { it.id == state.activeAssistantMessageId }
         _uiState.update {
+            val sessions = if (assistant == null) it.sessions else it.sessions.updateSession(
+                state.respondingSessionId.orEmpty(),
+            ) { session -> session.copy(messages = session.messages.map { item ->
+                if (item.id == assistant.id) item.copy(status = MessageStatus.FAILED) else item
+            }) }
             it.copy(
+                sessions = sessions,
                 respondingSessionId = null,
                 activeRequestId = null,
                 activeAssistantMessageId = null,
@@ -506,7 +570,68 @@ class ConversationViewModel(
                 error = ConversationErrorUi(message, retryable),
             )
         }
+        if (assistant != null && state.respondingSessionId != null) {
+            viewModelScope.launch(workerDispatcher) {
+                historyRepository.markAssistantFailed(
+                    state.respondingSessionId,
+                    assistant.copy(status = MessageStatus.FAILED),
+                )
+            }
+        }
     }
+
+    private fun applyPersistedSessions(persisted: List<ConversationSession>) {
+        _uiState.update { state ->
+            val blank = state.sessions.firstOrNull { session ->
+                persisted.none { it.id == session.id } && !session.hasUserMessage
+            }
+            val sessions = if (persisted.isEmpty()) listOfNotNull(blank) else persisted + listOfNotNull(blank)
+            val activeId = when {
+                sessions.any { it.id == state.activeSessionId } -> state.activeSessionId
+                persisted.isNotEmpty() -> persisted.first().id
+                blank != null -> blank.id
+                else -> createEmptyConversationSession().id
+            }
+            state.copy(sessions = sessions.ifEmpty { listOf(createEmptyConversationSession()) }, activeSessionId = activeId)
+        }
+        observeActiveMessages(_uiState.value.activeSessionId)
+    }
+
+    private fun observeActiveMessages(conversationId: String) {
+        activeMessagesJob?.cancel()
+        activeMessagesJob = viewModelScope.launch(workerDispatcher) {
+            historyRepository.observeMessages(conversationId).collect { messages ->
+                _uiState.update { state ->
+                    if (state.activeSessionId != conversationId || state.sessions.none { it.id == conversationId }) state
+                    else state.copy(sessions = state.sessions.updateSession(conversationId) {
+                        it.copy(messages = messages)
+                    })
+                }
+            }
+        }
+    }
+
+    private fun syncActiveConversation() {
+        val conversationId = _uiState.value.activeSessionId
+        if (_uiState.value.connectionState != ConnectionState.CONNECTED || !syncedConversationIds.add(conversationId)) return
+        viewModelScope.launch(workerDispatcher) {
+            val messages = historyRepository.recentCompletedMessages(conversationId)
+                .map { ConversationSyncMessage(it.author, it.content) }
+            repository.syncConversation(conversationId, messages).onFailure {
+                syncedConversationIds.remove(conversationId)
+            }
+        }
+    }
+}
+
+private object EmptyConversationHistoryRepository : ConversationHistoryRepository {
+    override fun observeSessions() = emptyFlow<List<ConversationSession>>()
+    override fun observeMessages(conversationId: String) = emptyFlow<List<ChatMessage>>()
+    override suspend fun saveUserMessage(session: ConversationSession, message: ChatMessage) = Unit
+    override suspend fun saveCompletedAssistant(conversationId: String, message: ChatMessage, sources: WebSearchSourcesUi?) = Unit
+    override suspend fun markAssistantFailed(conversationId: String, message: ChatMessage) = Unit
+    override suspend fun deleteConversation(conversationId: String) = Unit
+    override suspend fun recentCompletedMessages(conversationId: String) = emptyList<ChatMessage>()
 }
 
 private inline fun List<ConversationSession>.updateSession(

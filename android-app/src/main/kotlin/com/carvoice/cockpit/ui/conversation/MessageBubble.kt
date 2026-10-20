@@ -192,14 +192,14 @@ private fun MessageBubblePreview() {
         ) {
             ChatMessageItem(
                 message = ChatMessage(
-                    id = 1,
+                    id = "1",
                     author = MessageAuthor.AGENT,
                     content = "当前为模拟车辆数据：\n剩余续航 428 km，车内温度 24 ℃，胎压正常。",
                 ),
             )
             ChatMessageItem(
                 message = ChatMessage(
-                    id = 2,
+                    id = "2",
                     author = MessageAuthor.USER,
                     content = "帮我导航回家，并播放一些轻音乐。",
                 ),

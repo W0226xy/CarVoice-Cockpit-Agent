@@ -26,7 +26,7 @@ data class ConversationUiState(
     val pendingVehicleAction: VehicleActionUi? = null,
     val respondingSessionId: String? = null,
     val activeRequestId: String? = null,
-    val activeAssistantMessageId: Long? = null,
+    val activeAssistantMessageId: String? = null,
     val error: ConversationErrorUi? = null,
     val retryMessage: String? = null,
     val deleteTargetConversationId: String? = null,

@@ -66,6 +66,7 @@ class ChatSessionHandler(
                 if (event.type !in setOf(
                         SocketEventType.CHAT_REQUEST,
                         SocketEventType.CONTROL_CONFIRMATION_RESPONSE,
+                        SocketEventType.CONVERSATION_SYNC,
                     )
                 ) {
                     emit(
@@ -88,6 +89,10 @@ class ChatSessionHandler(
                             retryable = true,
                         ),
                     )
+                    continue
+                }
+                if (event.type == SocketEventType.CONVERSATION_SYNC) {
+                    conversationService.handleConversationSync(event, history, ::emit)
                     continue
                 }
                 activeJob = launch {

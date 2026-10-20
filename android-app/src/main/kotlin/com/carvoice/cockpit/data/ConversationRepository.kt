@@ -23,8 +23,18 @@ interface ConversationRepository {
         confirmed: Boolean,
     ): Result<Unit>
 
+    suspend fun syncConversation(
+        conversationId: String,
+        messages: List<ConversationSyncMessage>,
+    ): Result<Unit>
+
     fun close()
 }
+
+data class ConversationSyncMessage(
+    val author: com.carvoice.cockpit.model.MessageAuthor,
+    val content: String,
+)
 
 sealed interface ConversationStreamEvent {
     val requestId: String?

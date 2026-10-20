@@ -36,7 +36,7 @@ class WebSearchComponentsTest {
                     )
                     ChatMessageItem(
                         ChatMessage(
-                            id = 1,
+                            id = "1",
                             author = MessageAuthor.AGENT,
                             content = "这是带来源的回答[1]",
                             serverMessageId = "request-1",
