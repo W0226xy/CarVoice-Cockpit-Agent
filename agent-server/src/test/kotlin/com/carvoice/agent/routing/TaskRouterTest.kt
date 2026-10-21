@@ -7,12 +7,22 @@ import com.carvoice.agent.tasks.KnowledgeTask
 import com.carvoice.agent.tasks.MediaTask
 import com.carvoice.agent.tasks.NavigationTask
 import com.carvoice.agent.tasks.SimulatedCockpitTask
+import com.carvoice.agent.knowledge.KnowledgeAnswerService
+import com.carvoice.agent.knowledge.KnowledgeRetriever
+import com.carvoice.agent.knowledge.KnowledgeSearchResult
+import kotlinx.coroutines.flow.emptyFlow
 import com.carvoice.contracts.IntentType
 import kotlin.test.Test
 import kotlin.test.assertIs
 
 class TaskRouterTest {
-    private val router = TaskRouter(ChatTask(FakeCarVoiceAgent()))
+    private val router = TaskRouter(
+        ChatTask(FakeCarVoiceAgent()),
+        KnowledgeTask(
+            object : KnowledgeRetriever { override suspend fun search(topic: String) = KnowledgeSearchResult(topic, emptyList()) },
+            object : KnowledgeAnswerService { override fun answer(question: String, passages: List<com.carvoice.agent.knowledge.KnowledgePassage>) = emptyFlow<String>() },
+        ),
+    )
 
     @Test
     fun `all six intents route deterministically`() {

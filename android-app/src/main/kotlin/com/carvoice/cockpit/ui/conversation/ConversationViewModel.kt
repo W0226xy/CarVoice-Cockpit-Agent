@@ -21,6 +21,8 @@ import com.carvoice.cockpit.model.VehicleActionUi
 import com.carvoice.cockpit.model.WorkspaceDestination
 import com.carvoice.cockpit.model.WebSearchSourceUi
 import com.carvoice.cockpit.model.WebSearchSourcesUi
+import com.carvoice.cockpit.model.KnowledgeSourcesUi
+import com.carvoice.cockpit.model.KnowledgeSourceUi
 import java.util.UUID
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -117,61 +119,65 @@ class ConversationViewModel(
     }
 
     fun sendMessage() {
-        val state = _uiState.value
-        val message = state.inputText.trim()
-        if (message.isEmpty() || state.isAssistantResponding) return
-        if (state.connectionState != ConnectionState.CONNECTED) {
+        val state = _uiState.value//获取当前状态
+        val message = state.inputText.trim()//获取用户输入的消息并去除首尾空白
+        if (message.isEmpty() || state.isAssistantResponding) return//消息为空或助手正在响应时直接返回
+        if (state.connectionState != ConnectionState.CONNECTED) {//检查服务连接状态
             _uiState.update {
                 it.copy(
-                    error = ConversationErrorUi("服务尚未连接，请连接后重试。", true),
-                    retryMessage = message,
+                    error = ConversationErrorUi("服务尚未连接，请连接后重试。", true),//设置错误提示
+                    retryMessage = message,//保存消息以便重试
                 )
             }
-            repository.connect()
-            return
+            repository.connect()//重新连接服务
+            return//直接返回，不继续发送消息
         }
 
-        val sessionId = state.activeSessionId
-        val requestId = UUID.randomUUID().toString()
-        val now = System.currentTimeMillis()
+        val sessionId = state.activeSessionId//获取当前会话ID
+        val requestId = UUID.randomUUID().toString()//生成请求ID,标识本次请求，方便关联后续回复
+        val now = System.currentTimeMillis()//获取当前时间戳,记录消息创建时间、会话更新时间
         val userMessage = ChatMessage(
-            id = UUID.randomUUID().toString(),
-            author = MessageAuthor.USER,
-            content = message,
-            status = MessageStatus.COMPLETED,
-            createdAt = now,
+            id = UUID.randomUUID().toString(),//生成消息ID
+            author = MessageAuthor.USER,//消息作者为用户
+            content = message,//消息内容
+            status = MessageStatus.COMPLETED,//消息状态为已完成
+            createdAt = now,//创建时间
         )
         _uiState.update {
-            it.copy(
+            it.copy(//这种写法通常用于更新 MutableStateFlow,
+                // it：更新时的当前状态。copy()：根据原状态创建一个新对象。
+                //只替换明确写出的字段，其他字段保持原值。
+                //新状态发布后，收集该状态的 Compose 界面就可以更新。
                 sessions = it.sessions.updateSession(sessionId) { session ->
                     session.copy(
-                        title = if (!session.hasUserMessage && session.title == "新对话") {
+                        title = if (!session.hasUserMessage && session.title == "新对话") {//如果是首次用户消息且标题为新对话
                             message.toConversationTitle()
                         } else {
                             session.title
+
                         },
-                        updatedAtLabel = "刚刚",
-                        updatedAt = now,
-                        messages = session.messages + userMessage,
+                        updatedAtLabel = "刚刚",//更新时间标签
+                        updatedAt = now,//更新时间
+                        messages = session.messages + userMessage,//添加用户消息到会话
                     )
                 },
-                inputText = "",
-                pendingVehicleAction = null,
-                toolExecution = null,
-                pendingSearchSources = emptyMap(),
-                respondingSessionId = sessionId,
-                activeRequestId = requestId,
-                activeAssistantMessageId = null,
-                error = null,
-                retryMessage = message,
+                inputText = "",//清空输入框
+                pendingVehicleAction = null,//清除待处理的车辆操作
+                toolExecution = null,//清除工具执行状态
+                pendingSearchSources = emptyMap(),//清除待处理的搜索来源
+                respondingSessionId = sessionId,//设置正在响应的会话
+                activeRequestId = requestId,//设置活跃请求ID
+                activeAssistantMessageId = null,//清除活跃助手消息ID
+                error = null,//清除错误信息
+                retryMessage = message,//保存消息以便重试
             )
         }
 
         viewModelScope.launch(workerDispatcher) {
-            val session = _uiState.value.sessions.first { it.id == sessionId }
-            historyRepository.saveUserMessage(session, userMessage)
+            val session = _uiState.value.sessions.first { it.id == sessionId }//获取当前会话
+            historyRepository.saveUserMessage(session, userMessage)//保存用户消息到历史记录
             repository.sendMessage(sessionId, requestId, message)
-                .onFailure {
+                .onFailure {//发送失败时处理错误
                     showError("消息发送失败，请检查连接后重试。", retryable = true)
                 }
         }
@@ -382,6 +388,17 @@ class ConversationViewModel(
                 }
             }
             is ConversationStreamEvent.WebSearchSources -> attachSearchSources(event)
+            is ConversationStreamEvent.KnowledgeSources -> attachKnowledgeSources(event)
+        }
+    }
+
+    private fun attachKnowledgeSources(event: ConversationStreamEvent.KnowledgeSources) {
+        val sources=KnowledgeSourcesUi(event.knowledgeBaseId,event.query,event.sources.map { KnowledgeSourceUi(it.index,it.documentId,it.documentName,it.pageNumber,it.sectionTitle,it.snippet) })
+        _uiState.update { state ->
+            val session=state.sessions.firstOrNull { it.id==event.conversationId } ?: return@update state
+            val has=session.messages.any { it.serverMessageId==event.messageId }
+            if(!has && !(state.activeRequestId==event.messageId && state.respondingSessionId==event.conversationId)) return@update state
+            state.copy(sessions=if(has) state.sessions.updateSession(event.conversationId) { s->s.copy(messages=s.messages.map { if(it.serverMessageId==event.messageId) it.copy(knowledgeSources=sources.sources) else it }) } else state.sessions,pendingKnowledgeSources=if(has) state.pendingKnowledgeSources-event.messageId else state.pendingKnowledgeSources+(event.messageId to sources))
         }
     }
 
@@ -473,6 +490,7 @@ class ConversationViewModel(
 
         val assistantId = state.activeAssistantMessageId ?: UUID.randomUUID().toString()
         val pendingSources = state.pendingSearchSources[event.requestId]
+        val pendingKnowledge = state.pendingKnowledgeSources[event.requestId]
         _uiState.update {
             it.copy(
                 sessions = it.sessions.updateSession(event.conversationId) { session ->
@@ -498,6 +516,7 @@ class ConversationViewModel(
                             serverMessageId = event.requestId,
                             searchQuery = pendingSources?.query,
                             sources = pendingSources?.sources.orEmpty(),
+                            knowledgeSources = pendingKnowledge?.sources.orEmpty(),
                             status = MessageStatus.STREAMING,
                             createdAt = System.currentTimeMillis(),
                         )
@@ -506,6 +525,7 @@ class ConversationViewModel(
                 },
                 activeAssistantMessageId = assistantId,
                 pendingSearchSources = it.pendingSearchSources - event.requestId,
+                pendingKnowledgeSources = it.pendingKnowledgeSources - event.requestId,
             )
         }
     }

@@ -6,6 +6,7 @@ plugins {
 }
 
 val configuredAgentWsUrl = providers.gradleProperty("agentWsUrl")
+val configuredAgentHttpUrl = providers.gradleProperty("agentHttpBaseUrl")
 fun String.asBuildConfigString(): String =
     "\"${replace("\\", "\\\\").replace("\"", "\\\"")}\""
 
@@ -26,6 +27,7 @@ android {
         // a missing deployment configuration explicit instead of connecting to
         // the car device's own localhost on port 443.
         buildConfigField("String", "CHAT_WS_URL", configuredAgentWsUrl.orElse("").get().asBuildConfigString())
+        buildConfigField("String", "AGENT_HTTP_BASE_URL", configuredAgentHttpUrl.orElse("").get().asBuildConfigString())
     }
 
     buildTypes {
@@ -36,6 +38,7 @@ android {
                 "CHAT_WS_URL",
                 configuredAgentWsUrl.orElse("ws://10.0.2.2:8081/ws/chat").get().asBuildConfigString(),
             )
+            buildConfigField("String", "AGENT_HTTP_BASE_URL", configuredAgentHttpUrl.orElse("http://10.0.2.2:8081").get().asBuildConfigString())
         }
         release {
             optimization {
@@ -71,9 +74,12 @@ dependencies {
     implementation(libs.ktor.client.core)
     implementation(libs.ktor.client.websockets)
     implementation(libs.ktor.client.okhttp)
+    implementation(libs.ktor.client.content.negotiation)
+    implementation(libs.ktor.serialization.kotlinx.json)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
+    implementation(libs.androidx.datastore.preferences)
     ksp(libs.androidx.room.compiler)
     testImplementation(libs.junit)
     testImplementation(libs.androidx.room.testing)

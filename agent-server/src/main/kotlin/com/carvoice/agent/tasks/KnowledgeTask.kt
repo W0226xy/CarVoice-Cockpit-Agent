@@ -1,6 +1,35 @@
 package com.carvoice.agent.tasks
 
-class KnowledgeTask : TaskModule {
-    override suspend fun execute(context: TaskContext): TaskResult =
-        TaskResult.Reply("知识库检索能力尚未接入，我目前不能提供车辆手册检索结果。")
+import com.carvoice.agent.knowledge.KnowledgeAnswerService
+import com.carvoice.agent.knowledge.KnowledgeRetriever
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.flow
+import com.carvoice.contracts.KnowledgeSourcePayload
+import com.carvoice.contracts.KnowledgeSourcesPayload
+import com.carvoice.contracts.ToolCallStatus
+
+class KnowledgeTask(
+    private val retriever: KnowledgeRetriever,
+    private val answerService: KnowledgeAnswerService,
+) : TaskModule {
+    override suspend fun execute(context: TaskContext): TaskResult {
+        val topic = context.intent.slots["topic"]?.takeIf { it.isNotBlank() } ?: context.message
+        val result = try {
+            retriever.search(topic, context.knowledgeBaseId)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            return TaskResult.Reply("知识库检索暂时不可用，请稍后重试。")
+        }
+        if (result.passages.isEmpty()) return TaskResult.Reply("当前知识库中没有找到足够依据，无法回答这个问题。")
+        return TaskResult.Streaming(flow {
+            val callId = "knowledge-search-${context.requestId}"
+            emit(TaskStreamEvent.ToolProgress(callId, "vehicle_knowledge_search", ToolCallStatus.RUNNING, "正在检索车辆知识库"))
+            context.knowledgeBaseId?.let { baseId ->
+                emit(TaskStreamEvent.KnowledgeSources(KnowledgeSourcesPayload(context.conversationId, context.requestId, baseId, result.topic, result.passages.take(5).mapIndexed { index, passage -> KnowledgeSourcePayload(index + 1, passage.documentId, passage.title.take(200), passage.pageNumber, passage.sectionTitle?.take(200), passage.content.take(500)) })))
+            }
+            answerService.answer(context.message, result.passages).collect { emit(TaskStreamEvent.Delta(it)) }
+            emit(TaskStreamEvent.ToolProgress(callId, "vehicle_knowledge_search", ToolCallStatus.COMPLETED, "车辆知识库检索完成"))
+        })
+    }
 }

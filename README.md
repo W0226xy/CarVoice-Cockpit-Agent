@@ -24,7 +24,9 @@
 - `GENERAL_CHAT` 的按需联网决策、Tavily MCP 搜索进度和带来源流式回答；
 - Android 助手消息下的来源卡片与安全 http/https 外链打开。
 
-当前不包含 RAG、真实地图/媒体 App 联动、真实车辆控制、持久化、语音和鉴权。项目禁止连接 Vehicle HAL、CAN 总线及任何真实车辆设备。
+已完成车辆知识库 RAG 第一阶段：服务端以内存资料完成检索、受限资料问答与 WebSocket 流式返回。项目禁止连接 Vehicle HAL、CAN 总线及任何真实车辆设备。
+
+车辆知识库第二阶段已增加 pgvector、Flyway、OpenAI-compatible Embedding 与受开关保护的 PDF/TXT 导入 API。默认仍为 `RAG_STORAGE=memory`，不会连接数据库或远程 Embedding；只有显式选择 `pgvector` 才会校验并启用这些配置。
 
 ## 技术栈
 
@@ -75,6 +77,13 @@ tcp:8081`，并以 `-PagentWsUrl=ws://127.0.0.1:8081/ws/chat` 安装 debug 包�
 ```bash
 ./gradlew :android-app:installDebug -PagentWsUrl=ws://127.0.0.1:8081/ws/chat
 ```
+
+聊天 WebSocket 与知识库管理 HTTP 地址彼此独立：使用
+`-PagentWsUrl=ws://10.0.2.2:8081/ws/chat` 配置聊天，使用
+`-PagentHttpBaseUrl=http://10.0.2.2:8081` 配置知识库 API。真机配合
+`adb reverse tcp:8081 tcp:8081` 时可使用 `http://127.0.0.1:8081`。Release
+包不会提供默认 HTTP 地址，必须显式传入已部署的 HTTPS URL；客户端不保存任何
+数据库或模型密钥。
 
 发布包不会再错误地尝试访问设备自己的 `wss://localhost`。它必须指向已部署、
 具备 TLS 的服务，例如：
@@ -131,6 +140,27 @@ curl http://localhost:8081/health
 {"status":"ok","projectName":"CarVoice Cockpit Agent","providerMode":"openai_compatible"}
 ```
 
+### pgvector 知识库与文档导入
+
+复制 `.env.example` 后，设置本地 `DATABASE_PASSWORD`，可先检查并启动 pgvector：
+
+```bash
+docker compose config
+docker compose up -d postgres
+```
+
+将 `RAG_STORAGE=pgvector`，并设置 `DATABASE_URL`、`DATABASE_USER`、`DATABASE_PASSWORD`、`EMBEDDING_BASE_URL`、`EMBEDDING_API_KEY`、`EMBEDDING_MODEL` 与 `EMBEDDING_DIMENSION`。服务启动时执行 Flyway 迁移并验证已有向量维度；配置不完整或维度不一致会失败，不会降级为内存模式。
+
+管理 API 默认由 `KNOWLEDGE_IMPORT_ENABLED=false` 关闭。启用后可创建知识库并上传 UTF-8 TXT 或 PDF：
+
+```bash
+curl -X POST http://localhost:8081/api/knowledge-bases -H 'Content-Type: application/json' -d '{"name":"车辆手册"}'
+curl -X POST http://localhost:8081/api/knowledge-bases/<baseId>/documents -F 'file=@manual.txt;type=text/plain'
+curl http://localhost:8081/api/knowledge-bases/<baseId>/documents
+```
+
+上传会同步解析、按重叠切片、批量向量化并写入 pgvector；状态依次为 `PENDING`、`PROCESSING`、`READY` 或 `FAILED`。内存模式保留第一阶段种子资料，不支持导入管理接口。
+
 运行全部单元测试：
 
 ```bash
@@ -144,8 +174,9 @@ curl http://localhost:8081/health
 3. **Agent 流式回复（已完成）**：接入 Koog 与 OpenAI-compatible 真实模型。
 4. **意图路由与模拟座舱（已完成）**：实现结构化分类、任务路由、确认链路和内存态模拟控制。
 5. **Tavily MCP 联网搜索（已完成）**：实现按需搜索、来源引用、失败降级和 Android 来源卡片。
-6. **语音交互**：接入可替换的 ASR/TTS 适配层，完善打断和生命周期管理。
-7. **车辆知识问答**：接入 PostgreSQL、pgvector、Redis 和可追溯的 RAG。
-8. **联调与交付**：完成安全测试、可观测性、Docker Compose 编排和演示验收。
+6. **车辆知识问答第一阶段（已完成）**：内存资料、可替换 Embedding/Repository/Answer 接口，以及仅依据检索片段的流式回答。
+7. **车辆知识问答下一阶段**：接入 PostgreSQL、pgvector、文档导入与可追溯的持久化 RAG。
+8. **语音交互**：接入可替换的 ASR/TTS 适配层，完善打断和生命周期管理。
+9. **联调与交付**：完成安全测试、可观测性、Docker Compose 编排和演示验收。
 
 详细约定见 [`docs/`](docs/)。

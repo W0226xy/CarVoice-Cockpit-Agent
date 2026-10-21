@@ -14,6 +14,7 @@ object SocketEventType {
     const val CONTROL_CONFIRMATION_RESPONSE = "control_confirmation_response"
     const val SIMULATED_COCKPIT_STATE = "simulated_cockpit_state"
     const val WEB_SEARCH_SOURCES = "web_search_sources"
+    const val KNOWLEDGE_SOURCES = "knowledge_sources"
     const val CONVERSATION_SYNC = "conversation_sync"
 }
 
@@ -51,6 +52,7 @@ data class SocketEvent(
 @Serializable
 data class ChatRequestPayload(
     val message: String,
+    val knowledgeBaseId: String? = null,
 )
 
 @Serializable
@@ -123,3 +125,6 @@ data class WebSearchSourcePayload(
     val snippet: String,
     val publishedAt: String? = null,
 )
+
+@Serializable data class KnowledgeSourcesPayload(val conversationId:String,val messageId:String,val knowledgeBaseId:String,val query:String,val sources:List<KnowledgeSourcePayload>)
+@Serializable data class KnowledgeSourcePayload(val index:Int,val documentId:String,val documentName:String,val pageNumber:Int?=null,val sectionTitle:String?=null,val snippet:String)

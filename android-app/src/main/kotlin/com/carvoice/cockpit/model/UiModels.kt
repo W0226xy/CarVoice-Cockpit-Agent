@@ -26,6 +26,7 @@ data class ChatMessage(
     val serverMessageId: String? = null,
     val searchQuery: String? = null,
     val sources: List<WebSearchSourceUi> = emptyList(),
+    val knowledgeSources: List<KnowledgeSourceUi> = emptyList(),
     val status: MessageStatus = MessageStatus.COMPLETED,
     val createdAt: Long = 0L,
 )
@@ -43,6 +44,8 @@ data class WebSearchSourcesUi(
     val query: String,
     val sources: List<WebSearchSourceUi>,
 )
+data class KnowledgeSourceUi(val index:Int,val documentId:String,val documentName:String,val pageNumber:Int?,val sectionTitle:String?,val snippet:String)
+data class KnowledgeSourcesUi(val knowledgeBaseId:String,val query:String,val sources:List<KnowledgeSourceUi>)
 
 enum class ToolExecutionState {
     RUNNING,

@@ -54,6 +54,21 @@ WebSocket 事件后续统一使用以下信封：
 
 服务端拒绝空消息和超过 4000 字符的消息。非法 JSON、未知事件及模型失败均返回安全错误，不包含堆栈、密钥、环境变量或完整模型地址。
 
+## 知识库管理 HTTP API
+
+这些接口独立于 Android WebSocket，并且仅当 `KNOWLEDGE_IMPORT_ENABLED=true` 且服务使用 pgvector 管理仓库时可用；否则返回 `403` 和 `KNOWLEDGE_IMPORT_DISABLED`。
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| POST | `/api/knowledge-bases` | 创建 `{ "name": "车辆手册", "description": "" }` |
+| GET | `/api/knowledge-bases` | 列出知识库 |
+| POST | `/api/knowledge-bases/{id}/documents` | multipart 字段 `file` 上传 PDF/TXT |
+| GET | `/api/knowledge-bases/{id}/documents` | 查询文档与处理状态 |
+| GET | `/api/knowledge-bases/{id}/documents/{documentId}` | 查询单文档状态 |
+| DELETE | `/api/knowledge-bases/{id}/documents/{documentId}` | 删除文档及其切片 |
+
+上传最大大小受 `KNOWLEDGE_MAX_FILE_SIZE_MB` 限制。服务只接受 `application/pdf` 和 `text/plain`，会清理展示文件名；无效 UUID、未知文档、路径字符、解析失败和数据库内部错误均不会返回本地路径、堆栈或连接信息。
+
 ## 联网搜索事件时序
 
 需要联网的 `GENERAL_CHAT` 正常顺序：

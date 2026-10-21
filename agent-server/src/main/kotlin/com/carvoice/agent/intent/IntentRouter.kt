@@ -44,7 +44,7 @@ class IntentRouter(
     private fun deterministicClassification(message: String): IntentResult? {
         val text = message.trim()
         val intent = when {
-            vehicleKeywords.any(text::contains) -> IntentType.VEHICLE_CONTROL
+            vehicleControlPatterns.any { it.containsMatchIn(text) } -> IntentType.VEHICLE_CONTROL
             navigationKeywords.any(text::contains) -> IntentType.NAVIGATION
             mediaKeywords.any(text::contains) -> IntentType.MEDIA
             realTimeOrWebPatterns.any { it.containsMatchIn(text) } -> IntentType.GENERAL_CHAT
@@ -112,7 +112,10 @@ class IntentRouter(
         }
 
     private companion object {
-        val vehicleKeywords = listOf("空调", "车窗", "除雾", "风量")
+        val vehicleControlPatterns = listOf(
+            Regex("""(打开|开启|关闭|调到|设置).*(空调|车窗|除雾|风量)"""),
+            Regex("""(空调|车窗|除雾|风量).*(打开|开启|关闭|调到|设置)"""),
+        )
         val navigationKeywords = listOf("导航", "带我去", "前往")
         val mediaKeywords = listOf("播放", "音乐", "歌曲")
         val realTimeOrWebPatterns = listOf(
@@ -128,6 +131,9 @@ class IntentRouter(
             Regex("""车辆手册"""),
             Regex("""说明书"""),
             Regex("""故障灯"""),
+            Regex("""胎压(报警|警示|灯)?"""),
+            Regex("""前挡.*除雾.*(方法|怎么|如何|使用)"""),
+            Regex("""空调.*(方法|怎么|如何|使用)"""),
             Regex("""座舱功能"""),
             Regex("""上传(的)?文档"""),
             Regex("""(项目|内置).*(资料|知识库)"""),

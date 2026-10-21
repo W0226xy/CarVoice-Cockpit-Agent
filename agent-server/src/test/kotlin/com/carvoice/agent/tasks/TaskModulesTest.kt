@@ -12,6 +12,11 @@ import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
+import com.carvoice.agent.knowledge.KnowledgeAnswerService
+import com.carvoice.agent.knowledge.KnowledgePassage
+import com.carvoice.agent.knowledge.KnowledgeRetriever
+import com.carvoice.agent.knowledge.KnowledgeSearchResult
+import kotlinx.coroutines.flow.flowOf
 
 class TaskModulesTest {
     @Test
@@ -24,10 +29,13 @@ class TaskModulesTest {
     }
 
     @Test
-    fun `knowledge task explicitly reports unavailable retrieval`() = runBlocking {
-        val result = KnowledgeTask().execute(context(IntentType.KNOWLEDGE_QUERY))
+    fun `knowledge task honestly reports when retrieval has no evidence`() = runBlocking {
+        val result = KnowledgeTask(
+            object : KnowledgeRetriever { override suspend fun search(topic: String) = KnowledgeSearchResult(topic, emptyList()) },
+            object : KnowledgeAnswerService { override fun answer(question: String, passages: List<KnowledgePassage>) = flowOf("unused") },
+        ).execute(context(IntentType.KNOWLEDGE_QUERY))
 
-        assertTrue(assertIs<TaskResult.Reply>(result).text.contains("知识库检索能力尚未接入"))
+        assertTrue(assertIs<TaskResult.Reply>(result).text.contains("没有找到足够依据"))
     }
 
     @Test

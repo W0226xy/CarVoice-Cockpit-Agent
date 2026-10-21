@@ -7,6 +7,7 @@ import com.carvoice.contracts.SimulatedCockpitStatePayload
 import kotlinx.coroutines.flow.Flow
 import com.carvoice.contracts.ToolCallStatus
 import com.carvoice.contracts.WebSearchSourcesPayload
+import com.carvoice.contracts.KnowledgeSourcesPayload
 
 data class TaskContext(
     val requestId: String,
@@ -14,6 +15,7 @@ data class TaskContext(
     val message: String,
     val intent: IntentResult,
     val history: List<ConversationTurn>,
+    val knowledgeBaseId: String? = null,
 )
 
 sealed interface TaskResult {
@@ -41,6 +43,7 @@ sealed interface TaskStreamEvent {
         val message: String,
     ) : TaskStreamEvent
     data class SearchSources(val payload: WebSearchSourcesPayload) : TaskStreamEvent
+    data class KnowledgeSources(val payload: KnowledgeSourcesPayload) : TaskStreamEvent
 }
 
 interface TaskModule {

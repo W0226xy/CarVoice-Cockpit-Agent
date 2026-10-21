@@ -12,6 +12,7 @@ import com.carvoice.contracts.SocketEventType
 import com.carvoice.contracts.ToolProgressPayload
 import com.carvoice.contracts.WebSearchSourcesPayload
 import com.carvoice.contracts.WebSearchSourcePayload
+import com.carvoice.contracts.KnowledgeSourcesPayload
 import com.carvoice.contracts.ConversationSyncPayload
 import com.carvoice.contracts.ConversationSyncMessage as ProtocolSyncMessage
 import com.carvoice.contracts.ConversationSyncRole
@@ -146,6 +147,12 @@ class WebSocketConversationRepository(
                         sources,
                     )
                 }
+                SocketEventType.KNOWLEDGE_SOURCES -> {
+                    val requestId=event.requestId ?: return null; val conversationId=event.conversationId ?: return null
+                    val payload=event.decodePayload<KnowledgeSourcesPayload>() ?: return null
+                    if(payload.conversationId!=conversationId||payload.messageId!=requestId||payload.knowledgeBaseId.isBlank()) return null
+                    ConversationStreamEvent.KnowledgeSources(requestId,conversationId,payload.messageId,payload.knowledgeBaseId,payload.query.take(200),payload.sources.filter { it.index>0&&it.documentId.isNotBlank() }.take(5))
+                }
 
                 else -> null
         }
@@ -165,6 +172,7 @@ class WebSocketConversationRepository(
             payload = json.encodeToJsonElement(ChatRequestPayload(message)),
         ),
     )
+    override suspend fun sendMessage(conversationId:String,requestId:String,message:String,knowledgeBaseId:String?):Result<Unit> = connection.send(SocketEvent(type=SocketEventType.CHAT_REQUEST,requestId=requestId,conversationId=conversationId,payload=json.encodeToJsonElement(ChatRequestPayload(message,knowledgeBaseId))))
 
     override suspend fun sendControlConfirmation(
         conversationId: String,

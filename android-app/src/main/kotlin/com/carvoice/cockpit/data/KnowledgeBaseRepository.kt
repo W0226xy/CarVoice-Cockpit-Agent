@@ -1,13 +1,23 @@
 package com.carvoice.cockpit.data
 
-import com.carvoice.cockpit.model.KnowledgeBaseItem
 import kotlinx.coroutines.flow.Flow
+import java.io.InputStream
 
 /**
- * 后续可由 Room、DataStore 或服务端实现；本阶段知识条目只来自本地 UI 状态。
+ * Server-backed knowledge management boundary.
  */
 interface KnowledgeBaseRepository {
-    fun observeKnowledgeBases(): Flow<List<KnowledgeBaseItem>>
-
-    suspend fun selectKnowledgeBase(id: String)
+    suspend fun getKnowledgeBases(): Result<List<KnowledgeBase>>
+    suspend fun createKnowledgeBase(name: String, description: String): Result<KnowledgeBase>
+    suspend fun getDocuments(knowledgeBaseId: String): Result<List<KnowledgeDocument>>
+    suspend fun uploadDocument(knowledgeBaseId: String, document: UploadDocument): Result<KnowledgeDocument>
+    suspend fun getDocument(knowledgeBaseId: String, documentId: String): Result<KnowledgeDocument>
+    suspend fun deleteDocument(knowledgeBaseId: String, documentId: String): Result<Unit>
+    suspend fun selectKnowledgeBase(id: String?)
+    fun observeSelectedKnowledgeBaseId(): Flow<String?>
 }
+
+data class KnowledgeBase(val id: String, val name: String, val description: String)
+data class KnowledgeDocument(val id: String, val fileName: String, val contentType: String, val status: DocumentStatus, val errorMessage: String? = null)
+enum class DocumentStatus { PENDING, PROCESSING, READY, FAILED }
+data class UploadDocument(val fileName: String, val contentType: String, val sizeBytes: Long?, val openStream: () -> InputStream)

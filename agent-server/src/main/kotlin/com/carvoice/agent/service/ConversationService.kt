@@ -112,7 +112,7 @@ class ConversationService(
                 task::class.simpleName,
             )
             val result = task.execute(
-                TaskContext(requestId, conversationId, message, intent, snapshot),
+                TaskContext(requestId, conversationId, message, intent, snapshot, payload?.knowledgeBaseId),
             )
             emitResult(result, requestId, conversationId, history, emit)
         } catch (error: CancellationException) {
@@ -207,6 +207,14 @@ class ConversationService(
                                 payload = json.encodeToJsonElement<WebSearchSourcesPayload>(
                                     streamEvent.payload,
                                 ),
+                            ),
+                        )
+                        is TaskStreamEvent.KnowledgeSources -> emit(
+                            SocketEvent(
+                                type = SocketEventType.KNOWLEDGE_SOURCES,
+                                requestId = requestId,
+                                conversationId = conversationId,
+                                payload = json.encodeToJsonElement(streamEvent.payload),
                             ),
                         )
                     }

@@ -23,10 +23,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import com.carvoice.cockpit.BuildConfig
 import com.carvoice.cockpit.data.AgentConnection
 import com.carvoice.cockpit.data.AgentConnectionConfig
 import com.carvoice.cockpit.data.WebSocketConversationRepository
+import com.carvoice.cockpit.data.HttpKnowledgeBaseRepository
+import com.carvoice.cockpit.data.UploadDocument
 import com.carvoice.cockpit.data.local.CarVoiceDatabase
 import com.carvoice.cockpit.data.local.RoomConversationHistoryRepository
 import com.carvoice.cockpit.model.WorkspaceDestination
@@ -35,6 +39,8 @@ import com.carvoice.cockpit.ui.conversation.ConversationUiState
 import com.carvoice.cockpit.ui.conversation.ConversationViewModel
 import com.carvoice.cockpit.ui.conversation.ConversationViewModelFactory
 import com.carvoice.cockpit.ui.knowledge.KnowledgeBaseScreen
+import com.carvoice.cockpit.ui.knowledge.KnowledgeBaseViewModel
+import com.carvoice.cockpit.ui.knowledge.KnowledgeBaseViewModelFactory
 import com.carvoice.cockpit.ui.sidebar.ChatSidebar
 import com.carvoice.cockpit.ui.sidebar.DeleteConversationDialog
 import kotlinx.coroutines.launch
@@ -59,6 +65,17 @@ fun CarVoiceApp(
     }
     val resolvedViewModel = conversationViewModel ?: viewModel(factory = defaultFactory)
     val conversationState by resolvedViewModel.uiState.collectAsState()
+    val knowledgeFactory = remember(context) { KnowledgeBaseViewModelFactory(HttpKnowledgeBaseRepository(context.applicationContext, BuildConfig.AGENT_HTTP_BASE_URL)) }
+    val knowledgeViewModel: KnowledgeBaseViewModel = viewModel(factory = knowledgeFactory)
+    val knowledgeState by knowledgeViewModel.uiState.collectAsState()
+    val documentPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        val resolver = context.contentResolver
+        val name = resolver.query(uri, null, null, null, null)?.use { cursor -> cursor.moveToFirst(); cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }?.let(cursor::getString) } ?: "document"
+        val type = resolver.getType(uri) ?: if (name.endsWith(".pdf", true)) "application/pdf" else "text/plain"
+        val size = resolver.openAssetFileDescriptor(uri, "r")?.use { it.length.takeIf { length -> length >= 0 } }
+        knowledgeViewModel.upload(UploadDocument(name, type, size) { requireNotNull(resolver.openInputStream(uri)) })
+    }
 
     Surface(
         modifier = modifier.fillMaxSize(),
@@ -114,6 +131,9 @@ fun CarVoiceApp(
                             viewModel = resolvedViewModel,
                             onOpenSidebar = null,
                             onOpenSource = resolvedLinkOpener::open,
+                            knowledgeState = knowledgeState,
+                            knowledgeViewModel = knowledgeViewModel,
+                            onPickDocument = { documentPicker.launch(arrayOf("application/pdf", "text/plain")) },
                         )
                     }
                 }
@@ -142,6 +162,9 @@ fun CarVoiceApp(
                         viewModel = resolvedViewModel,
                         onOpenSidebar = { scope.launch { drawerState.open() } },
                         onOpenSource = resolvedLinkOpener::open,
+                        knowledgeState = knowledgeState,
+                        knowledgeViewModel = knowledgeViewModel,
+                        onPickDocument = { documentPicker.launch(arrayOf("application/pdf", "text/plain")) },
                     )
                 }
             }
@@ -161,6 +184,9 @@ private fun WorkspaceContent(
     viewModel: ConversationViewModel,
     onOpenSidebar: (() -> Unit)?,
     onOpenSource: (String) -> Unit,
+    knowledgeState: com.carvoice.cockpit.ui.knowledge.KnowledgeBaseUiState,
+    knowledgeViewModel: KnowledgeBaseViewModel,
+    onPickDocument: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     when (state.destination) {
@@ -178,9 +204,17 @@ private fun WorkspaceContent(
         )
 
         WorkspaceDestination.KNOWLEDGE_BASE -> KnowledgeBaseScreen(
-            items = state.knowledgeBases,
+            state = knowledgeState,
             onBackToConversation = viewModel::returnToConversation,
             onOpenSidebar = onOpenSidebar,
+            onRefresh = knowledgeViewModel::refresh,
+            onSelect = knowledgeViewModel::select,
+            onCreate = knowledgeViewModel::create,
+            onUpload = onPickDocument,
+            onDelete = knowledgeViewModel::requestDelete,
+            onConfirmDelete = knowledgeViewModel::confirmDelete,
+            onCancelDelete = knowledgeViewModel::cancelDelete,
+            onDismissError = knowledgeViewModel::dismissError,
             modifier = modifier.fillMaxSize(),
         )
     }

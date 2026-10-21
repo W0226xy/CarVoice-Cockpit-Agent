@@ -15,6 +15,7 @@ interface ConversationRepository {
         requestId: String,
         message: String,
     ): Result<Unit>
+    suspend fun sendMessage(conversationId:String,requestId:String,message:String,knowledgeBaseId:String?):Result<Unit> = sendMessage(conversationId,requestId,message)
 
     suspend fun sendControlConfirmation(
         conversationId: String,
@@ -89,4 +90,6 @@ sealed interface ConversationStreamEvent {
         val query: String,
         val sources: List<com.carvoice.contracts.WebSearchSourcePayload>,
     ) : ConversationStreamEvent
+
+    data class KnowledgeSources(override val requestId:String,override val conversationId:String,val messageId:String,val knowledgeBaseId:String,val query:String,val sources:List<com.carvoice.contracts.KnowledgeSourcePayload>) : ConversationStreamEvent
 }

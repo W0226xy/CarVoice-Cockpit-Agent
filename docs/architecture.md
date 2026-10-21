@@ -8,7 +8,7 @@
 | `agent-server` | Ktor 会话、IntentRouter、TaskRouter、Koog 流式聊天和模拟座舱 | 权限、审计及持久化 |
 | `shared-contracts` | 统一意图、消息、确认、状态、工具和错误字段 | 协议版本兼容 |
 | 工具层 | 参数校验、确认和按会话隔离的内存模拟状态 | 真实能力适配（须另行安全设计） |
-| 知识库/数据层 | 仅环境变量与部署占位 | PostgreSQL/pgvector 检索、Redis 会话缓存、审计存储 |
+| 知识库/数据层 | 内存车辆资料、可替换嵌入与检索接口 | PostgreSQL/pgvector 检索、Redis 会话缓存、审计存储 |
 
 ## 调用关系
 
@@ -29,7 +29,7 @@ TaskRouter (deterministic when)
         |       +--> SearchDecision -> optional WebSearchPort
         |       +--> Tavily MCP search -> bounded untrusted context
         +--> NavigationTask / MediaTask -> recognition only
-        +--> KnowledgeTask -> unavailable notice
+        +--> KnowledgeTask -> KnowledgeRetriever -> EmbeddingService + KnowledgeRepository -> dedicated Koog RAG answer stream
         +--> SimulatedCockpitTask -> confirmation -> in-memory state
         +--> ClarificationTask
 ```
@@ -60,6 +60,20 @@ Koog 用于结构化意图识别和 `GENERAL_CHAT` 流式生成，不能决定�
 
 Tavily API Key 只存在服务端配置和请求 URI 中，不进入 Android、WebSocket、日志或回答。外部网页不能修改系统提示词、意图路由、工具权限或触发额外工具调用。
 
+### 车辆知识库 RAG 第一阶段
+
+1. 仅车辆手册、故障灯、座舱功能和明确知识库请求会被 `IntentRouter` 标记为 `KNOWLEDGE_QUERY`；天气、新闻和其他实时问题仍为 `GENERAL_CHAT`，由原有搜索决策处理。
+2. `TaskRouter` 将该意图交给 `KnowledgeTask`。任务使用 `KnowledgeRetriever`，由注入的 `EmbeddingService` 生成查询向量，并由注入的 `KnowledgeRepository` 返回排序片段。
+3. 默认实现是 `CharacterNgramEmbeddingService` 和 `InMemoryKnowledgeRepository`，内置胎压报警、发动机故障灯、前挡除雾和空调使用资料；不连接数据库或网络。
+4. 有命中时 `KnowledgeAnswerService` 将问题和片段传给 Koog 的独立资料问答 Prompt，再经现有 `assistant_delta` / `assistant_completed` 流式返回。Prompt 明确规定资料为不可信输入、不得执行车控/导航/媒体/联网搜索、且只能依据片段回答。
+5. 未命中时返回“当前知识库中没有找到足够依据”；检索异常返回安全的暂不可用提示。知识任务没有 Tavily 端口或工具依赖。
+
+### 车辆知识库 RAG 第二阶段
+
+`RagConfig` 统一解析配置。`memory` 模式使用确定性 n-gram 和种子资料；`pgvector` 模式在启动时运行 Flyway，并选择 `OpenAiCompatibleEmbeddingService` 与 `PgVectorKnowledgeRepository`。后者使用参数化 SQL、余弦相似度、`topK` 上限及最低分过滤，并拒绝向量维度不一致。
+
+导入链路为 `DocumentUploadRoute → DocumentIngestionService → DocumentParser → DocumentChunker → EmbeddingService → KnowledgeManagementRepository`。PDF 按页提取，TXT 使用 UTF-8 替换非法字节；切片保留序号、页码和可用章节元数据。文档状态持久化为 `PENDING`、`PROCESSING`、`READY` 或 `FAILED`。导入路由默认关闭，且资料内容始终是不可信输入，不能影响工具权限或路由。
+
 每个 `conversationId` 的模拟座舱状态相互隔离，仅在服务进程运行期存在。
 
 ## 数据与配置边界
@@ -78,8 +92,8 @@ Tavily API Key 只存在服务端配置和请求 URI 中，不进入 Android、W
 - `com.carvoice.agent.routing`：确定性任务路由；
 - `com.carvoice.agent.tasks`：聊天、导航、媒体、知识、澄清和模拟座舱任务；
 - `com.carvoice.agent.search`：联网决策、可替换搜索端口、Tavily MCP Adapter 和受限上下文构建；
-- `com.carvoice.agent.knowledge`：未接入的后续 RAG 接口边界；
+- `com.carvoice.agent.knowledge`：第一阶段内存 RAG、可替换检索/嵌入/答案接口；
 - `com.carvoice.agent.tools`：工具注册、风险策略与 Mock 能力；
 - `com.carvoice.contracts`：跨端统一协议模型。
 
-`ClientAction.Navigate` 与 `ClientAction.PlayMedia` 仅作为未来 Android 动作领域边界，本阶段不会通过协议发送或执行。RAG、真实地图/媒体 App、真实车控、持久化和鉴权均未实现。
+`ClientAction.Navigate` 与 `ClientAction.PlayMedia` 仅作为未来 Android 动作领域边界，本阶段不会通过协议发送或执行。第一阶段 RAG 不包含持久化、pgvector 或文档上传；真实地图/媒体 App、真实车控和鉴权均未实现。

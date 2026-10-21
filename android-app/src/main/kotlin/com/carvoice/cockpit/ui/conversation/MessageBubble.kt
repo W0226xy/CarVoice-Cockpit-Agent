@@ -28,6 +28,7 @@ import com.carvoice.cockpit.model.ChatMessage
 import com.carvoice.cockpit.model.MessageAuthor
 import com.carvoice.cockpit.ui.theme.CarVoiceCockpitTheme
 import com.carvoice.cockpit.ui.components.WebSearchSourcesCard
+import com.carvoice.cockpit.ui.components.KnowledgeSourcesCard
 import kotlin.math.PI
 import kotlin.math.sin
 
@@ -107,6 +108,7 @@ fun AssistantMessage(
                     modifier = Modifier.padding(top = 6.dp),
                 )
             }
+            if (message.knowledgeSources.isNotEmpty()) KnowledgeSourcesCard(message.knowledgeSources, Modifier.padding(top = 6.dp))
         }
     }
 }

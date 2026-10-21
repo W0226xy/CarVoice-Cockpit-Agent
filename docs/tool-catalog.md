@@ -75,7 +75,14 @@
 - **返回结果**：`answer: string`、`citations: object[]`、`notFound: boolean`。
 - **风险等级**：只读。
 - **二次确认**：否。
-- **执行边界**：知识库接入前不得伪造手册来源；本阶段不执行检索。
+- **执行边界**：通过 `KnowledgeRetriever` 检索内存资料或 pgvector 切片，答案模型只可使用返回片段；不得触发 Tavily、车控、导航或媒体。
+
+### `knowledge_document_import`
+
+- **用途**：服务端管理 API 将 PDF/TXT 解析为带页码的文本切片，生成向量后存入 pgvector。
+- **风险等级**：受控写入。
+- **开关**：仅 `KNOWLEDGE_IMPORT_ENABLED=true` 时可用，默认关闭。
+- **安全边界**：仅允许 PDF/TXT、限制文件大小、清理文件名；内容不视为指令，失败不暴露数据库或本地路径。
 
 ## 通用执行要求
 
