@@ -42,7 +42,7 @@ class KnowledgeRagTest {
         assertTrue(answerPassages.any { it.id == "engine-malfunction-light" })
         assertEquals(
             "发动机故障灯常亮时应避免激烈驾驶。[engine-malfunction-light]",
-            assertIs<TaskStreamEvent.Delta>(events.single()).text,
+            assertIs<TaskStreamEvent.Delta>(events.filterIsInstance<TaskStreamEvent.Delta>().single()).text,
         )
     }
 
@@ -52,13 +52,15 @@ class KnowledgeRagTest {
             object : KnowledgeRetriever { override suspend fun search(topic: String) = KnowledgeSearchResult(topic, emptyList()) },
             unusedAnswerService(),
         )
-        assertTrue(assertIs<TaskResult.Reply>(emptyTask.execute(context())).text.contains("没有找到足够依据"))
+        val emptyEvents = assertIs<TaskResult.Streaming>(emptyTask.execute(context())).events.toList()
+        assertTrue((emptyEvents.filterIsInstance<TaskStreamEvent.Delta>().single()).text.contains("没有找到足够依据"))
 
         val failedTask = KnowledgeTask(
             object : KnowledgeRetriever { override suspend fun search(topic: String): KnowledgeSearchResult = error("offline") },
             unusedAnswerService(),
         )
-        assertEquals("知识库检索暂时不可用，请稍后重试。", assertIs<TaskResult.Reply>(failedTask.execute(context())).text)
+        val failedEvents = assertIs<TaskResult.Streaming>(failedTask.execute(context())).events.toList()
+        assertTrue(failedEvents.any { it is TaskStreamEvent.ToolProgress && it.status == com.carvoice.contracts.ToolCallStatus.FAILED })
     }
 
     @Test

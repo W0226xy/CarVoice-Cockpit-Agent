@@ -44,6 +44,7 @@ class ConversationViewModel(
         _uiState.asStateFlow()
 
     private var activeMessagesJob: Job? = null
+    @Volatile private var selectedKnowledgeBaseId: String? = null
     private val syncedConversationIds = mutableSetOf<String>()
 
     init {
@@ -107,6 +108,9 @@ class ConversationViewModel(
     fun updateInput(text: String) {
         _uiState.update { it.copy(inputText = text) }
     }
+
+    /** Kept independently of UI navigation so outgoing WebSocket requests remain scoped. */
+    fun updateSelectedKnowledgeBase(id: String?) { selectedKnowledgeBaseId = id }
 
     fun prepareQuickAction(action: QuickAction) {
         _uiState.update {
@@ -176,7 +180,7 @@ class ConversationViewModel(
         viewModelScope.launch(workerDispatcher) {
             val session = _uiState.value.sessions.first { it.id == sessionId }//获取当前会话
             historyRepository.saveUserMessage(session, userMessage)//保存用户消息到历史记录
-            repository.sendMessage(sessionId, requestId, message)
+            repository.sendMessage(sessionId, requestId, message, selectedKnowledgeBaseId)
                 .onFailure {//发送失败时处理错误
                     showError("消息发送失败，请检查连接后重试。", retryable = true)
                 }
@@ -543,6 +547,8 @@ class ConversationViewModel(
             ?: assistant?.searchQuery?.let { query ->
                 WebSearchSourcesUi(query, assistant.sources)
             }
+        val pendingKnowledge = state.pendingKnowledgeSources[event.requestId]
+            ?: assistant?.knowledgeSources?.takeIf { it.isNotEmpty() }?.let { sources -> KnowledgeSourcesUi("system-vehicle-manual", "", sources) }
         _uiState.update {
             val sessions = it.sessions.updateSession(event.conversationId) { session ->
                 session.copy(messages = session.messages.map { message ->
@@ -565,6 +571,7 @@ class ConversationViewModel(
                     event.conversationId,
                     assistant.copy(status = MessageStatus.COMPLETED),
                     pendingSources,
+                    pendingKnowledge,
                 )
             }
         }
@@ -648,7 +655,7 @@ private object EmptyConversationHistoryRepository : ConversationHistoryRepositor
     override fun observeSessions() = emptyFlow<List<ConversationSession>>()
     override fun observeMessages(conversationId: String) = emptyFlow<List<ChatMessage>>()
     override suspend fun saveUserMessage(session: ConversationSession, message: ChatMessage) = Unit
-    override suspend fun saveCompletedAssistant(conversationId: String, message: ChatMessage, sources: WebSearchSourcesUi?) = Unit
+    override suspend fun saveCompletedAssistant(conversationId: String, message: ChatMessage, sources: WebSearchSourcesUi?, knowledgeSources: KnowledgeSourcesUi?) = Unit
     override suspend fun markAssistantFailed(conversationId: String, message: ChatMessage) = Unit
     override suspend fun deleteConversation(conversationId: String) = Unit
     override suspend fun recentCompletedMessages(conversationId: String) = emptyList<ChatMessage>()

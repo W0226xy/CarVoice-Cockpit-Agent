@@ -180,3 +180,12 @@ curl http://localhost:8081/api/knowledge-bases/<baseId>/documents
 9. **联调与交付**：完成安全测试、可观测性、Docker Compose 编排和演示验收。
 
 详细约定见 [`docs/`](docs/)。
+# CarVoice Cockpit Agent
+
+## RAG 第三阶段本地配置
+
+默认 `RAG_ENABLED=false`，此时知识库查询会明确提示未启用，且不会连接 PostgreSQL 或 embedding 服务。开发演示可设为 `RAG_ENABLED=true`、`RAG_STORAGE=memory`；该模式使用内置资料并返回 `system-vehicle-manual` 来源。真实资料库使用 `RAG_STORAGE=pgvector`，并要求 `DATABASE_URL`、`DATABASE_USER`、`DATABASE_PASSWORD`、`EMBEDDING_BASE_URL`、`EMBEDDING_API_KEY`、`EMBEDDING_MODEL` 与 `EMBEDDING_DIMENSION`。
+
+`EMBEDDING_DIMENSION` 会写入 Flyway 的定长 `vector(n)` 列并用于 HNSW 索引。已有库不能只改该环境变量；必须以显式迁移和文档重新索引切换维度。上传接口会返回 `202/PENDING`，随后状态为 `PROCESSING`、`READY` 或 `FAILED`。
+
+运行验证：`./gradlew test`、`./gradlew :agent-server:test`、`./gradlew :android-app:testDebugUnitTest` 和 `docker compose config`。使用 pgvector 时先按 `docker compose up -d postgres` 启动数据库，再提供上述环境变量。

@@ -27,9 +27,9 @@ CREATE TABLE document_chunks (
     chunk_index INTEGER NOT NULL,
     page_number INTEGER,
     section_title VARCHAR(500),
+    -- V2 converts this legacy untyped column to the configured fixed dimension.
     embedding vector NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (document_id, chunk_index)
 );
 CREATE INDEX document_chunks_base_idx ON document_chunks(knowledge_base_id, document_id);
-CREATE INDEX document_chunks_embedding_idx ON document_chunks USING hnsw (embedding vector_cosine_ops);

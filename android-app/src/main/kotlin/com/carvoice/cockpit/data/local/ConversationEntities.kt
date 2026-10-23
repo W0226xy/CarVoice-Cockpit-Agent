@@ -59,6 +59,23 @@ data class WebSearchSourceEntity(
     val publishedAt: String?,
 )
 
+@Entity(
+    tableName = "knowledge_sources",
+    foreignKeys = [ForeignKey(entity = MessageEntity::class, parentColumns = ["messageId"], childColumns = ["messageId"], onDelete = ForeignKey.CASCADE)],
+    indices = [Index("messageId")],
+)
+data class KnowledgeSourceEntity(
+    @PrimaryKey val sourceId: String,
+    val messageId: String,
+    val sourceIndex: Int,
+    val knowledgeBaseId: String,
+    val documentId: String,
+    val documentName: String,
+    val pageNumber: Int?,
+    val sectionTitle: String?,
+    val snippet: String,
+)
+
 class CarVoiceRoomConverters {
     @TypeConverter fun authorToString(value: MessageAuthor): String = value.name
     @TypeConverter fun stringToAuthor(value: String): MessageAuthor = MessageAuthor.valueOf(value)

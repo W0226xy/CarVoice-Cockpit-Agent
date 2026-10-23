@@ -19,6 +19,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
@@ -55,6 +56,7 @@ fun CarVoiceApp(
     val resolvedLinkOpener = remember(externalLinkOpener, context) {
         externalLinkOpener ?: AndroidExternalLinkOpener(context)
     }
+    val knowledgeRepository = remember(context) { HttpKnowledgeBaseRepository(context.applicationContext, BuildConfig.AGENT_HTTP_BASE_URL) }
     val defaultFactory = remember(context) {
         ConversationViewModelFactory(
             WebSocketConversationRepository(
@@ -65,7 +67,9 @@ fun CarVoiceApp(
     }
     val resolvedViewModel = conversationViewModel ?: viewModel(factory = defaultFactory)
     val conversationState by resolvedViewModel.uiState.collectAsState()
-    val knowledgeFactory = remember(context) { KnowledgeBaseViewModelFactory(HttpKnowledgeBaseRepository(context.applicationContext, BuildConfig.AGENT_HTTP_BASE_URL)) }
+    val selectedKnowledgeBaseId by knowledgeRepository.observeSelectedKnowledgeBaseId().collectAsState(initial = null)
+    LaunchedEffect(selectedKnowledgeBaseId) { resolvedViewModel.updateSelectedKnowledgeBase(selectedKnowledgeBaseId) }
+    val knowledgeFactory = remember(knowledgeRepository) { KnowledgeBaseViewModelFactory(knowledgeRepository) }
     val knowledgeViewModel: KnowledgeBaseViewModel = viewModel(factory = knowledgeFactory)
     val knowledgeState by knowledgeViewModel.uiState.collectAsState()
     val documentPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->

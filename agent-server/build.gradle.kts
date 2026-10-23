@@ -27,6 +27,7 @@ dependencies {
     implementation(libs.flyway.core)
     implementation(libs.flyway.database.postgresql)
     implementation(libs.postgresql)
+    implementation(libs.hikari)
     implementation(libs.pdfbox)
 
     testImplementation(kotlin("test"))

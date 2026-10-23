@@ -14,6 +14,7 @@ data class KnowledgePassage(
     val documentId: String = id,
     val pageNumber: Int? = null,
     val sectionTitle: String? = null,
+    val knowledgeBaseId: String = "system-vehicle-manual",
 )
 
 data class KnowledgeSearchResult(

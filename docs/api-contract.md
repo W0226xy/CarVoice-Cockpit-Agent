@@ -29,6 +29,7 @@ WebSocket 事件后续统一使用以下信封：
 | 服务端 → Android | `tool_progress` | 模拟座舱工具进度 |
 | 服务端 → Android | `simulated_cockpit_state` | 执行后的完整模拟座舱状态 |
 | 服务端 → Android | `web_search_sources` | 当前助手回答引用的联网来源 |
+| 服务端 → Android | `knowledge_sources` | 当前助手回答引用的车辆知识库来源 |
 
 `chat_request` 的 payload：
 
@@ -56,7 +57,7 @@ WebSocket 事件后续统一使用以下信封：
 
 ## 知识库管理 HTTP API
 
-这些接口独立于 Android WebSocket，并且仅当 `KNOWLEDGE_IMPORT_ENABLED=true` 且服务使用 pgvector 管理仓库时可用；否则返回 `403` 和 `KNOWLEDGE_IMPORT_DISABLED`。
+这些接口独立于 Android WebSocket，并且仅当 `RAG_ENABLED=true`、`KNOWLEDGE_IMPORT_ENABLED=true` 且存在管理仓库时可用；否则返回 `403` 和 `KNOWLEDGE_IMPORT_DISABLED`。上传返回 `202 Accepted` 和 `PENDING`，客户端应轮询至 `READY` 或 `FAILED`。
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
@@ -68,6 +69,8 @@ WebSocket 事件后续统一使用以下信封：
 | DELETE | `/api/knowledge-bases/{id}/documents/{documentId}` | 删除文档及其切片 |
 
 上传最大大小受 `KNOWLEDGE_MAX_FILE_SIZE_MB` 限制。服务只接受 `application/pdf` 和 `text/plain`，会清理展示文件名；无效 UUID、未知文档、路径字符、解析失败和数据库内部错误均不会返回本地路径、堆栈或连接信息。
+
+错误码：`KNOWLEDGE_IMPORT_DISABLED`、`INVALID_REQUEST`、`INVALID_ID`、`INVALID_FILE`、`FILE_TOO_LARGE`、`NOT_FOUND`；Android 同时将超时和服务不可用显示为安全的通用提示。`DOCUMENT_PROCESSING_FAILED` 由文档状态的安全错误信息表达，不能包含服务端异常详情。
 
 ## 联网搜索事件时序
 

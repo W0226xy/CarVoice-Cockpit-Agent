@@ -14,7 +14,7 @@ class InMemoryKnowledgeRepository(
         require(limit > 0) { "limit must be positive" }
         return documents.map { document ->
             val documentEmbedding = embeddingService.embed("${document.title}\n${document.content}")
-            KnowledgePassage(document.id, document.title, document.content, cosine(query.embedding, documentEmbedding))
+            KnowledgePassage(document.id, document.title, document.content, cosine(query.embedding, documentEmbedding), knowledgeBaseId = "system-vehicle-manual")
         }.filter { it.score >= minimumScore }.sortedByDescending { it.score }.take(limit)
     }
 

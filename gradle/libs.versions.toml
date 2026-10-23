@@ -19,6 +19,7 @@ ksp = "2.2.10-2.0.2"
 flyway = "11.8.2"
 postgres = "42.7.7"
 pdfbox = "3.0.5"
+hikari = "6.3.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -52,6 +53,7 @@ flyway-core = { group = "org.flywaydb", name = "flyway-core", version.ref = "fly
 flyway-database-postgresql = { group = "org.flywaydb", name = "flyway-database-postgresql", version.ref = "flyway" }
 postgresql = { group = "org.postgresql", name = "postgresql", version.ref = "postgres" }
 pdfbox = { group = "org.apache.pdfbox", name = "pdfbox", version.ref = "pdfbox" }
+hikari = { group = "com.zaxxer", name = "HikariCP", version.ref = "hikari" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerializationJson" }
 logback-classic = { group = "ch.qos.logback", name = "logback-classic", version.ref = "logback" }
 koog-agents = { group = "ai.koog", name = "koog-agents", version.ref = "koog" }

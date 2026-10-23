@@ -68,11 +68,13 @@ Tavily API Key 只存在服务端配置和请求 URI 中，不进入 Android、W
 4. 有命中时 `KnowledgeAnswerService` 将问题和片段传给 Koog 的独立资料问答 Prompt，再经现有 `assistant_delta` / `assistant_completed` 流式返回。Prompt 明确规定资料为不可信输入、不得执行车控/导航/媒体/联网搜索、且只能依据片段回答。
 5. 未命中时返回“当前知识库中没有找到足够依据”；检索异常返回安全的暂不可用提示。知识任务没有 Tavily 端口或工具依赖。
 
-### 车辆知识库 RAG 第二阶段
+### 车辆知识库 RAG 第三阶段
 
-`RagConfig` 统一解析配置。`memory` 模式使用确定性 n-gram 和种子资料；`pgvector` 模式在启动时运行 Flyway，并选择 `OpenAiCompatibleEmbeddingService` 与 `PgVectorKnowledgeRepository`。后者使用参数化 SQL、余弦相似度、`topK` 上限及最低分过滤，并拒绝向量维度不一致。
+`RAG_ENABLED=false` 时 RAG 是完全关闭的：不创建 embedding HTTP client、pgvector 连接池或仓库，且不运行 RAG Flyway；`KNOWLEDGE_QUERY` 直接说明功能未启用。启用后 `memory` 模式使用确定性 n-gram 和固定 `system-vehicle-manual` 来源，`pgvector` 模式选择 OpenAI-compatible embedding 与 PostgreSQL/pgvector。
 
-导入链路为 `DocumentUploadRoute → DocumentIngestionService → DocumentParser → DocumentChunker → EmbeddingService → KnowledgeManagementRepository`。PDF 按页提取，TXT 使用 UTF-8 替换非法字节；切片保留序号、页码和可用章节元数据。文档状态持久化为 `PENDING`、`PROCESSING`、`READY` 或 `FAILED`。导入路由默认关闭，且资料内容始终是不可信输入，不能影响工具权限或路由。
+pgvector 的 `document_chunks.embedding` 是 Flyway placeholder 生成的 `vector(${embedding_dimension})`，HNSW 仅建立于这个定长列。启动会核对配置、列 typmod 与既有向量维度；不一致会停止并要求显式迁移/重新索引，不能只改环境变量切换模型。数据库访问使用应用生命周期连接池。
+
+导入链路为 `DocumentUploadRoute → PENDING → lifecycle CoroutineScope → PROCESSING → parser/chunker/embedding/repository → READY|FAILED`。上传立即返回 202；取消应用任务时协程会取消，删除后的任务在写切片前再次检查文档。PDF 还检查扩展名、声明类型和 `%PDF-` 文件头，大小受限；状态分别表示排队、处理中、可检索、处理失败。Android 会将联网与知识库来源一并持久化到 Room，删除消息/会话会级联删除来源。
 
 每个 `conversationId` 的模拟座舱状态相互隔离，仅在服务进程运行期存在。
 

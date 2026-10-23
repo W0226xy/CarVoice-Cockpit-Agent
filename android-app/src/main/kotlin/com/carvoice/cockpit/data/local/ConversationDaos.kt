@@ -56,3 +56,13 @@ interface WebSearchSourceDao {
     suspend fun insertAll(sources: List<WebSearchSourceEntity>)
 
 }
+
+@Dao
+interface KnowledgeSourceDao {
+    @Query("SELECT * FROM knowledge_sources WHERE messageId = :messageId ORDER BY sourceIndex ASC, sourceId ASC")
+    suspend fun forMessage(messageId: String): List<KnowledgeSourceEntity>
+    @Query("SELECT * FROM knowledge_sources WHERE messageId IN (:messageIds) ORDER BY sourceIndex ASC, sourceId ASC")
+    suspend fun forMessages(messageIds: List<String>): List<KnowledgeSourceEntity>
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(sources: List<KnowledgeSourceEntity>)
+}

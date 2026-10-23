@@ -11,6 +11,10 @@ import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import javax.net.ssl.SSLException
 
 class EmbeddingException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
 
@@ -47,7 +51,17 @@ class OpenAiCompatibleEmbeddingService(
             }
         }
     } catch (error: EmbeddingException) { throw error
-    } catch (error: Exception) { throw EmbeddingException("Embedding service is unavailable", error) }
+    } catch (error: Exception) {
+        // Keep document status useful without leaking provider response bodies, credentials or stack traces.
+        val message = when (error) {
+            is SocketTimeoutException -> "Embedding service request timed out"
+            is UnknownHostException -> "Embedding service host could not be resolved"
+            is SSLException -> "Embedding service TLS connection failed"
+            is SerializationException -> "Embedding service returned an invalid response format"
+            else -> "Embedding service is unavailable (${error::class.simpleName ?: "network error"})"
+        }
+        throw EmbeddingException(message, error)
+    }
 }
 
 @Serializable private data class EmbeddingRequest(val model: String, val input: List<String>)

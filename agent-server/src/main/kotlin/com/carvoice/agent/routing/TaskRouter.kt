@@ -11,7 +11,7 @@ import com.carvoice.contracts.IntentType
 
 class TaskRouter(
     val chatTask: ChatTask,
-    val knowledgeTask: KnowledgeTask,
+    val knowledgeTask: TaskModule,
     val navigationTask: NavigationTask = NavigationTask(),
     val mediaTask: MediaTask = MediaTask(),
     val simulatedCockpitTask: SimulatedCockpitTask = SimulatedCockpitTask(),

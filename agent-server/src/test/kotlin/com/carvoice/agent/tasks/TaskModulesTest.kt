@@ -17,6 +17,7 @@ import com.carvoice.agent.knowledge.KnowledgePassage
 import com.carvoice.agent.knowledge.KnowledgeRetriever
 import com.carvoice.agent.knowledge.KnowledgeSearchResult
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.toList
 
 class TaskModulesTest {
     @Test
@@ -35,7 +36,8 @@ class TaskModulesTest {
             object : KnowledgeAnswerService { override fun answer(question: String, passages: List<KnowledgePassage>) = flowOf("unused") },
         ).execute(context(IntentType.KNOWLEDGE_QUERY))
 
-        assertTrue(assertIs<TaskResult.Reply>(result).text.contains("没有找到足够依据"))
+        val events = assertIs<TaskResult.Streaming>(result).events.toList()
+        assertTrue(events.filterIsInstance<TaskStreamEvent.Delta>().single().text.contains("没有找到足够依据"))
     }
 
     @Test

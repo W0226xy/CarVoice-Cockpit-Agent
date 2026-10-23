@@ -2,6 +2,7 @@ package com.carvoice.agent.routes
 
 import com.carvoice.agent.config.RagConfig
 import com.carvoice.agent.knowledge.DocumentIngestionService
+import com.carvoice.agent.knowledge.DocumentImportManager
 import com.carvoice.agent.knowledge.KnowledgeManagementRepository
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.PartData
@@ -25,9 +26,9 @@ import java.util.UUID
 @Serializable data class DocumentResponse(val id: String, val fileName: String, val contentType: String, val status: String, val errorMessage: String? = null)
 @Serializable data class ApiError(val code: String, val message: String)
 
-fun Application.configureKnowledgeManagementRoutes(config: RagConfig, repository: KnowledgeManagementRepository?, ingestion: DocumentIngestionService?) {
+fun Application.configureKnowledgeManagementRoutes(config: RagConfig, repository: KnowledgeManagementRepository?, ingestion: DocumentIngestionService?, imports: DocumentImportManager?) {
     routing { route("/api/knowledge-bases") {
-        fun disabled() = repository == null || ingestion == null || !config.importEnabled
+        fun disabled() = !config.enabled || repository == null || ingestion == null || imports == null || !config.importEnabled
         post {
             if (disabled()) return@post call.respond(HttpStatusCode.Forbidden, ApiError("KNOWLEDGE_IMPORT_DISABLED", "知识库导入功能未启用。"))
             val request = runCatching { call.receive<CreateKnowledgeBaseRequest>() }.getOrNull()
@@ -49,7 +50,10 @@ fun Application.configureKnowledgeManagementRoutes(config: RagConfig, repository
                 val allowed = mapOf("application/pdf" to "pdf", "text/plain" to "txt")
                 if (type !in allowed || bytes == null || fileName.isNullOrBlank()) return@post call.respond(HttpStatusCode.BadRequest, ApiError("INVALID_FILE", "只允许 PDF 或 TXT 文件。"))
                 if (bytes!!.size > config.maxFileSizeBytes) return@post call.respond(HttpStatusCode.PayloadTooLarge, ApiError("FILE_TOO_LARGE", "文件超过大小限制。"))
-                val document = requireNotNull(ingestion).ingest(baseId, fileName!!, type!!, bytes!!)
+                val extension = fileName!!.substringAfterLast('.', "").lowercase()
+                if (allowed[type] != extension || (type == "application/pdf" && !bytes!!.copyOfRange(0, minOf(5, bytes!!.size)).decodeToString().startsWith("%PDF-"))) return@post call.respond(HttpStatusCode.BadRequest, ApiError("INVALID_FILE", "文件类型、扩展名或文件头无效。"))
+                val document = requireNotNull(repository).createDocument(baseId, fileName!!.substringAfterLast('/').substringAfterLast('\\').replace(Regex("[^\\p{L}\\p{N}._ -]"), "_").take(255), type!!)
+                requireNotNull(imports).submit(baseId, document, bytes!!)
                 call.respond(HttpStatusCode.Accepted, document.response())
             }
             get {

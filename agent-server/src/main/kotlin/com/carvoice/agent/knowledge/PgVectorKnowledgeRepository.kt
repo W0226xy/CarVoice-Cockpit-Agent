@@ -4,6 +4,8 @@ import com.carvoice.agent.config.RagConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.flywaydb.core.Flyway
+import com.zaxxer.hikari.HikariConfig
+import com.zaxxer.hikari.HikariDataSource
 import java.sql.Connection
 import java.sql.DriverManager
 import java.time.Instant
@@ -11,13 +13,27 @@ import java.util.UUID
 
 class KnowledgeRepositoryException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
 
-class PgVectorKnowledgeRepository(private val config: RagConfig) : KnowledgeManagementRepository {
+class PgVectorKnowledgeRepository(private val config: RagConfig) : KnowledgeManagementRepository, AutoCloseable {
+    private val dataSource: HikariDataSource
     init {
         config.requirePgVectorConfiguration()
-        Flyway.configure().dataSource(requireNotNull(config.databaseUrl), config.databaseUser, config.databasePassword).load().migrate()
+        val dimension = requireNotNull(config.embeddingDimension)
+        dataSource = HikariDataSource(HikariConfig().apply {
+            jdbcUrl = requireNotNull(config.databaseUrl); username = config.databaseUser; password = config.databasePassword
+            maximumPoolSize = 8; minimumIdle = 1; poolName = "knowledge-pgvector"
+        })
+        Flyway.configure().dataSource(dataSource).placeholders(mapOf("embedding_dimension" to dimension.toString())).load().migrate()
         connection<Unit> {
+            // pgvector stores the declared vector dimension directly in atttypmod.
+            prepareStatement("SELECT atttypmod FROM pg_attribute WHERE attrelid='document_chunks'::regclass AND attname='embedding'").use { statement ->
+                statement.executeQuery().use { result ->
+                    check(result.next() && result.getInt(1) == dimension) {
+                        "pgvector column dimension differs from EMBEDDING_DIMENSION=$dimension. Existing data cannot be switched by changing environment variables; reindex documents with a matching migration."
+                    }
+                }
+            }
             prepareStatement("SELECT count(*) FROM document_chunks WHERE vector_dims(embedding) <> ?").use { statement ->
-                statement.setInt(1, requireNotNull(config.embeddingDimension)); statement.executeQuery().use { result ->
+                statement.setInt(1, dimension); statement.executeQuery().use { result ->
                     if (result.next() && result.getInt(1) > 0) error("Existing pgvector embeddings do not match EMBEDDING_DIMENSION")
                 }
             }; Unit
@@ -39,7 +55,7 @@ class PgVectorKnowledgeRepository(private val config: RagConfig) : KnowledgeMana
                     val page = results.getObject("page_number") as? Int
                     val section = results.getString("section_title")
                     val suffix = listOfNotNull(page?.let { "第${it}页" }, section).joinToString(" · ")
-                    add(KnowledgePassage(results.getString(1), results.getString(3), results.getString(4), results.getDouble("score"), results.getString(2), page, section))
+                    add(KnowledgePassage(results.getString(1), results.getString(3), results.getString(4), results.getDouble("score"), results.getString(2), page, section, baseId.toString()))
                 }
             } }
         }
@@ -59,6 +75,7 @@ class PgVectorKnowledgeRepository(private val config: RagConfig) : KnowledgeMana
     override suspend fun replaceChunks(documentId: UUID, baseId: UUID, chunks: List<DocumentChunk>) = db { autoCommit=false; try { prepareStatement("DELETE FROM document_chunks WHERE document_id=?").use { it.setObject(1,documentId);it.executeUpdate() }; prepareStatement("INSERT INTO document_chunks(id,document_id,knowledge_base_id,content,chunk_index,page_number,section_title,embedding) VALUES(?,?,?,?,?,?,?,?::vector)").use { s -> chunks.forEach { c -> require(c.embedding.size==config.embeddingDimension){"Document embedding dimension mismatch"};s.setObject(1,UUID.randomUUID());s.setObject(2,documentId);s.setObject(3,baseId);s.setString(4,c.content);s.setInt(5,c.chunkIndex);s.setObject(6,c.pageNumber);s.setString(7,c.sectionTitle);s.setString(8,c.embedding.asVector());s.addBatch() };s.executeBatch() }; commit() } catch(e:Exception){rollback();throw e} finally {autoCommit=true} }
     override suspend fun deleteDocument(baseId: UUID, documentId: UUID): Boolean = db { prepareStatement("DELETE FROM knowledge_documents WHERE knowledge_base_id=? AND id=?").use { it.setObject(1,baseId);it.setObject(2,documentId);it.executeUpdate()>0 } }
     private suspend fun <T> db(block: Connection.() -> T): T = try { withContext(Dispatchers.IO) { connection(block) } } catch(e: Exception) { if(e is KnowledgeRepositoryException) throw e; throw KnowledgeRepositoryException("Knowledge repository operation failed",e) }
-    private fun <T> connection(block: Connection.() -> T): T = DriverManager.getConnection(requireNotNull(config.databaseUrl), config.databaseUser, config.databasePassword).use(block)
+    private fun <T> connection(block: Connection.() -> T): T = dataSource.connection.use(block)
+    override fun close() = dataSource.close()
 }
 private fun List<Float>.asVector() = joinToString(prefix="[", postfix="]") { it.toString() }

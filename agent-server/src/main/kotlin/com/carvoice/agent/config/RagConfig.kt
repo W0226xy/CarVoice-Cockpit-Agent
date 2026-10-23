@@ -42,7 +42,8 @@ data class RagConfig(
                 databaseUrl = environment.optional("DATABASE_URL"), databaseUser = environment.optional("DATABASE_USER"), databasePassword = environment.optional("DATABASE_PASSWORD"),
                 embeddingBaseUrl = environment.optional("EMBEDDING_BASE_URL")?.trimEnd('/')?.removeSuffix("/v1"),
                 embeddingApiKey = environment.optional("EMBEDDING_API_KEY"), embeddingModel = environment.optional("EMBEDDING_MODEL"),
-                embeddingDimension = environment.optional("EMBEDDING_DIMENSION")?.toIntOrNull()?.also { require(it in 1..8192) { "EMBEDDING_DIMENSION must be 1..8192" } },
+                // pgvector HNSW vector_cosine_ops supports at most 2,000 dimensions.
+                embeddingDimension = environment.optional("EMBEDDING_DIMENSION")?.toIntOrNull()?.also { require(it in 1..2000) { "EMBEDDING_DIMENSION must be 1..2000 when HNSW is enabled" } },
                 importEnabled = environment.bool("KNOWLEDGE_IMPORT_ENABLED", false),
                 maxFileSizeBytes = environment.int("KNOWLEDGE_MAX_FILE_SIZE_MB", 20, 1..100).toLong() * 1024 * 1024,
                 chunkSize = environment.int("KNOWLEDGE_CHUNK_SIZE", 800, 100..4000),
@@ -51,7 +52,8 @@ data class RagConfig(
                 minScore = environment.optional("KNOWLEDGE_MIN_SCORE")?.toDoubleOrNull()?.also { require(it in 0.0..1.0) { "KNOWLEDGE_MIN_SCORE must be 0..1" } } ?: 0.5,
             ).also { config ->
                 require(config.chunkOverlap < config.chunkSize) { "KNOWLEDGE_CHUNK_OVERLAP must be smaller than KNOWLEDGE_CHUNK_SIZE" }
-                if (config.storage == RagStorage.PGVECTOR) config.requirePgVectorConfiguration()
+                // A disabled RAG subsystem must be inert: no DB/client validation or initialization.
+                if (config.enabled && config.storage == RagStorage.PGVECTOR) config.requirePgVectorConfiguration()
             }
         }
     }
