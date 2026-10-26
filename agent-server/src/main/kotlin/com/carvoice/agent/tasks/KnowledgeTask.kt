@@ -23,10 +23,24 @@ class KnowledgeTask(
                 emit(TaskStreamEvent.ToolProgress(callId, "vehicle_knowledge_search", ToolCallStatus.FAILED, "知识库检索失败")); return@flow
             }
             if (result.passages.isEmpty()) { emit(TaskStreamEvent.Delta("当前知识库中没有找到足够依据，无法回答这个问题。")); emit(TaskStreamEvent.ToolProgress(callId, "vehicle_knowledge_search", ToolCallStatus.COMPLETED, "车辆知识库检索完成")); return@flow }
-            val baseId = result.passages.first().knowledgeBaseId
-            emit(TaskStreamEvent.KnowledgeSources(KnowledgeSourcesPayload(context.conversationId, context.requestId, baseId, result.topic, result.passages.take(5).mapIndexed { index, passage -> KnowledgeSourcePayload(index + 1, passage.documentId, passage.title.take(200), passage.pageNumber, passage.sectionTitle?.take(200), passage.content.take(500)) })))
+            // Retrieved passages are model-only candidates.  The source event is deliberately
+            // delayed until the completed answer tells us which candidates it actually cited.
+            val retrievedPassages = result.passages
             emit(TaskStreamEvent.ToolProgress(callId, "vehicle_knowledge_search", ToolCallStatus.RUNNING, "正在根据资料生成回答"))
-            answerService.answer(context.message, result.passages).collect { emit(TaskStreamEvent.Delta(it)) }
+            val answer = StringBuilder()
+            answerService.answer(context.message, retrievedPassages).collect {
+                answer.append(it)
+                emit(TaskStreamEvent.Delta(it))
+            }
+            val citationIndexes = com.carvoice.agent.knowledge.extractCitationIndexes(answer.toString(), retrievedPassages.size)
+            if (citationIndexes.isNotEmpty()) {
+                val baseId = retrievedPassages.first().knowledgeBaseId
+                val citedPassages = citationIndexes.map { index -> index to retrievedPassages[index - 1] }
+                emit(TaskStreamEvent.KnowledgeSources(KnowledgeSourcesPayload(
+                    context.conversationId, context.requestId, baseId, result.topic,
+                    citedPassages.map { (index, passage) -> KnowledgeSourcePayload(index, passage.documentId, passage.title.take(200), passage.pageNumber, passage.sectionTitle?.take(200), passage.content.take(500)) },
+                )))
+            }
             emit(TaskStreamEvent.ToolProgress(callId, "vehicle_knowledge_search", ToolCallStatus.COMPLETED, "车辆知识库回答完成"))
         })
     }

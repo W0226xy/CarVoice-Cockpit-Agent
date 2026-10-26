@@ -151,7 +151,7 @@ class WebSocketConversationRepository(
                     val requestId=event.requestId ?: return null; val conversationId=event.conversationId ?: return null
                     val payload=event.decodePayload<KnowledgeSourcesPayload>() ?: return null
                     if(payload.conversationId!=conversationId||payload.messageId!=requestId||payload.knowledgeBaseId.isBlank()) return null
-                    ConversationStreamEvent.KnowledgeSources(requestId,conversationId,payload.messageId,payload.knowledgeBaseId,payload.query.take(200),payload.sources.filter { it.index>0&&it.documentId.isNotBlank() }.take(5))
+                    ConversationStreamEvent.KnowledgeSources(requestId,conversationId,payload.messageId,payload.knowledgeBaseId,payload.query.take(200),payload.sources.filter { it.index>0&&it.documentId.isNotBlank() }.distinctBy { it.index to it.documentId })
                 }
 
                 else -> null

@@ -46,6 +46,11 @@ class ConversationViewModel(
     private var activeMessagesJob: Job? = null
     @Volatile private var selectedKnowledgeBaseId: String? = null
     private val syncedConversationIds = mutableSetOf<String>()
+    /** Keeps socket events scoped when the user switches away during a streamed response. */
+    private val activeRequestsByConversation = mutableMapOf<String, String>()
+    private val assistantMessageIdsByRequest = mutableMapOf<String, String>()
+    /** IDs removed optimistically, so a last Room emission cannot resurrect a deleted row. */
+    private val locallyDeletedConversationIds = mutableSetOf<String>()
 
     init {
         repository.connect()
@@ -93,8 +98,17 @@ class ConversationViewModel(
                         } else {
                             emptyMap()
                         },
+                        pendingKnowledgeSources = if (connectionState == ConnectionState.CONNECTED) {
+                            it.pendingKnowledgeSources
+                        } else {
+                            emptyMap()
+                        },
                     ).also {
                         if (connectionState != ConnectionState.CONNECTED) syncedConversationIds.clear()
+                        if (connectionState != ConnectionState.CONNECTED) {
+                            activeRequestsByConversation.clear()
+                            assistantMessageIdsByRequest.clear()
+                        }
                     }
                 }
                 if (connectionState == ConnectionState.CONNECTED) syncActiveConversation()
@@ -176,6 +190,7 @@ class ConversationViewModel(
                 retryMessage = message,//保存消息以便重试
             )
         }
+        activeRequestsByConversation[sessionId] = requestId
 
         viewModelScope.launch(workerDispatcher) {
             val session = _uiState.value.sessions.first { it.id == sessionId }//获取当前会话
@@ -297,6 +312,7 @@ class ConversationViewModel(
             listOf(nextSession) + remainingSessions.filter(ConversationSession::hasUserMessage)
         }
 
+        locallyDeletedConversationIds += targetId
         _uiState.update {
             it.copy(
                 sessions = nextSessions,
@@ -397,13 +413,14 @@ class ConversationViewModel(
     }
 
     private fun attachKnowledgeSources(event: ConversationStreamEvent.KnowledgeSources) {
-        val sources=KnowledgeSourcesUi(event.knowledgeBaseId,event.query,event.sources.map { KnowledgeSourceUi(it.index,it.documentId,it.documentName,it.pageNumber,it.sectionTitle,it.snippet) })
+        val sources=KnowledgeSourcesUi(event.knowledgeBaseId,event.query,event.sources.distinctBy { it.index to it.documentId }.map { KnowledgeSourceUi(it.index,it.documentId,it.documentName,it.pageNumber,it.sectionTitle,it.snippet) })
         _uiState.update { state ->
             val session=state.sessions.firstOrNull { it.id==event.conversationId } ?: return@update state
             val has=session.messages.any { it.serverMessageId==event.messageId }
-            if(!has && !(state.activeRequestId==event.messageId && state.respondingSessionId==event.conversationId)) return@update state
-            state.copy(sessions=if(has) state.sessions.updateSession(event.conversationId) { s->s.copy(messages=s.messages.map { if(it.serverMessageId==event.messageId) it.copy(knowledgeSources=sources.sources) else it }) } else state.sessions,pendingKnowledgeSources=if(has) state.pendingKnowledgeSources-event.messageId else state.pendingKnowledgeSources+(event.messageId to sources))
+            if(!has && activeRequestsByConversation[event.conversationId] != event.messageId) return@update state
+            state.copy(sessions=if(has) state.sessions.updateSession(event.conversationId) { s->s.copy(messages=s.messages.map { if(it.serverMessageId==event.messageId) it.copy(knowledgeSources=sources.sources, knowledgeBaseId=sources.knowledgeBaseId, knowledgeQuery=sources.query) else it }) } else state.sessions,pendingKnowledgeSources=if(has) state.pendingKnowledgeSources-event.messageId else state.pendingKnowledgeSources+(event.messageId to sources))
         }
+        persistCompletedAssistantWithLatestSources(event.conversationId, event.messageId)
     }
 
     private fun attachSearchSources(event: ConversationStreamEvent.WebSearchSources) {
@@ -426,9 +443,7 @@ class ConversationViewModel(
             val hasAssistantMessage = session.messages.any {
                 it.serverMessageId == event.messageId
             }
-            val isExpectedPendingResponse =
-                state.activeRequestId == event.messageId &&
-                    state.respondingSessionId == event.conversationId
+            val isExpectedPendingResponse = activeRequestsByConversation[event.conversationId] == event.messageId
             if (!hasAssistantMessage && !isExpectedPendingResponse) {
                 return@update state
             }
@@ -458,6 +473,25 @@ class ConversationViewModel(
                 },
             )
         }
+        persistCompletedAssistantWithLatestSources(event.conversationId, event.messageId)
+    }
+
+    /** Source events are allowed to arrive just after ASSISTANT_COMPLETED. */
+    private fun persistCompletedAssistantWithLatestSources(conversationId: String, requestId: String) {
+        val message = _uiState.value.sessions.firstOrNull { it.id == conversationId }
+            ?.messages?.firstOrNull { it.serverMessageId == requestId }
+            ?.takeIf { it.status == MessageStatus.COMPLETED }
+            ?: return
+        viewModelScope.launch(workerDispatcher) {
+            historyRepository.saveCompletedAssistant(
+                conversationId,
+                message,
+                message.searchQuery?.let { WebSearchSourcesUi(it, message.sources) },
+                message.knowledgeSources.takeIf { it.isNotEmpty() }?.let {
+                    KnowledgeSourcesUi(message.knowledgeBaseId ?: "system-vehicle-manual", message.knowledgeQuery.orEmpty(), it)
+                },
+            )
+        }
     }
 
     private fun respondToVehicleAction(confirmed: Boolean) {
@@ -472,6 +506,7 @@ class ConversationViewModel(
                 error = null,
             )
         }
+        activeRequestsByConversation[action.conversationId] = requestId
         viewModelScope.launch(workerDispatcher) {
             repository.sendControlConfirmation(
                 action.conversationId,
@@ -486,13 +521,11 @@ class ConversationViewModel(
 
     private fun appendDelta(event: ConversationStreamEvent.AssistantDelta) {
         val state = _uiState.value
-        if (event.requestId != state.activeRequestId ||
-            event.conversationId != state.respondingSessionId
-        ) {
+        if (activeRequestsByConversation[event.conversationId] != event.requestId) {
             return
         }
 
-        val assistantId = state.activeAssistantMessageId ?: UUID.randomUUID().toString()
+        val assistantId = assistantMessageIdsByRequest.getOrPut(event.requestId) { UUID.randomUUID().toString() }
         val pendingSources = state.pendingSearchSources[event.requestId]
         val pendingKnowledge = state.pendingKnowledgeSources[event.requestId]
         _uiState.update {
@@ -521,13 +554,15 @@ class ConversationViewModel(
                             searchQuery = pendingSources?.query,
                             sources = pendingSources?.sources.orEmpty(),
                             knowledgeSources = pendingKnowledge?.sources.orEmpty(),
+                            knowledgeBaseId = pendingKnowledge?.knowledgeBaseId,
+                            knowledgeQuery = pendingKnowledge?.query,
                             status = MessageStatus.STREAMING,
                             createdAt = System.currentTimeMillis(),
                         )
                     }
                     session.copy(messages = messages, updatedAtLabel = "刚刚")
                 },
-                activeAssistantMessageId = assistantId,
+                activeAssistantMessageId = if (it.activeSessionId == event.conversationId) assistantId else it.activeAssistantMessageId,
                 pendingSearchSources = it.pendingSearchSources - event.requestId,
                 pendingKnowledgeSources = it.pendingKnowledgeSources - event.requestId,
             )
@@ -536,19 +571,18 @@ class ConversationViewModel(
 
     private fun completeResponse(event: ConversationStreamEvent.AssistantCompleted) {
         val state = _uiState.value
-        if (event.requestId != state.activeRequestId ||
-            event.conversationId != state.respondingSessionId
-        ) {
+        if (activeRequestsByConversation[event.conversationId] != event.requestId) {
             return
         }
+        val assistantId = assistantMessageIdsByRequest[event.requestId]
         val assistant = state.sessions.firstOrNull { it.id == event.conversationId }
-            ?.messages?.firstOrNull { it.id == state.activeAssistantMessageId }
+            ?.messages?.firstOrNull { it.id == assistantId }
         val pendingSources = state.pendingSearchSources[event.requestId]
             ?: assistant?.searchQuery?.let { query ->
                 WebSearchSourcesUi(query, assistant.sources)
             }
         val pendingKnowledge = state.pendingKnowledgeSources[event.requestId]
-            ?: assistant?.knowledgeSources?.takeIf { it.isNotEmpty() }?.let { sources -> KnowledgeSourcesUi("system-vehicle-manual", "", sources) }
+            ?: assistant?.knowledgeSources?.takeIf { it.isNotEmpty() }?.let { sources -> KnowledgeSourcesUi(assistant.knowledgeBaseId ?: "system-vehicle-manual", assistant.knowledgeQuery.orEmpty(), sources) }
         _uiState.update {
             val sessions = it.sessions.updateSession(event.conversationId) { session ->
                 session.copy(messages = session.messages.map { message ->
@@ -557,14 +591,17 @@ class ConversationViewModel(
             }
             it.copy(
                 sessions = sessions,
-                respondingSessionId = null,
-                activeRequestId = null,
-                activeAssistantMessageId = null,
+                respondingSessionId = if (it.activeRequestId == event.requestId) null else it.respondingSessionId,
+                activeRequestId = if (it.activeRequestId == event.requestId) null else it.activeRequestId,
+                activeAssistantMessageId = if (it.activeRequestId == event.requestId) null else it.activeAssistantMessageId,
                 error = null,
                 retryMessage = null,
                 pendingSearchSources = it.pendingSearchSources - event.requestId,
+                pendingKnowledgeSources = it.pendingKnowledgeSources - event.requestId,
             )
         }
+        activeRequestsByConversation.remove(event.conversationId)
+        assistantMessageIdsByRequest.remove(event.requestId)
         if (assistant != null && assistant.content.isNotBlank()) {
             viewModelScope.launch(workerDispatcher) {
                 historyRepository.saveCompletedAssistant(
@@ -597,6 +634,12 @@ class ConversationViewModel(
                 error = ConversationErrorUi(message, retryable),
             )
         }
+        state.respondingSessionId?.let { conversationId ->
+            if (activeRequestsByConversation[conversationId] == state.activeRequestId) {
+                activeRequestsByConversation.remove(conversationId)
+            }
+        }
+        state.activeRequestId?.let(assistantMessageIdsByRequest::remove)
         if (assistant != null && state.respondingSessionId != null) {
             viewModelScope.launch(workerDispatcher) {
                 historyRepository.markAssistantFailed(
@@ -609,14 +652,21 @@ class ConversationViewModel(
 
     private fun applyPersistedSessions(persisted: List<ConversationSession>) {
         _uiState.update { state ->
-            val blank = state.sessions.firstOrNull { session ->
-                persisted.none { it.id == session.id } && !session.hasUserMessage
+            val visiblePersisted = persisted.filterNot { it.id in locallyDeletedConversationIds }
+            val persistedIds = visiblePersisted.mapTo(mutableSetOf()) { it.id }
+            // observeSessions only contains conversation metadata; its messages are deliberately
+            // empty.  Preserve UI messages here until the per-conversation Room flow supplies
+            // them, otherwise an older DB emission erases optimistic/streaming messages.
+            val sessions = visiblePersisted.map { saved ->
+                state.sessions.firstOrNull { it.id == saved.id }?.let { current ->
+                    saved.copy(messages = current.messages)
+                } ?: saved
+            } + state.sessions.filter { session ->
+                session.id !in persistedIds && session.id !in locallyDeletedConversationIds
             }
-            val sessions = if (persisted.isEmpty()) listOfNotNull(blank) else persisted + listOfNotNull(blank)
             val activeId = when {
                 sessions.any { it.id == state.activeSessionId } -> state.activeSessionId
-                persisted.isNotEmpty() -> persisted.first().id
-                blank != null -> blank.id
+                visiblePersisted.isNotEmpty() -> visiblePersisted.first().id
                 else -> createEmptyConversationSession().id
             }
             state.copy(sessions = sessions.ifEmpty { listOf(createEmptyConversationSession()) }, activeSessionId = activeId)
@@ -631,7 +681,7 @@ class ConversationViewModel(
                 _uiState.update { state ->
                     if (state.activeSessionId != conversationId || state.sessions.none { it.id == conversationId }) state
                     else state.copy(sessions = state.sessions.updateSession(conversationId) {
-                        it.copy(messages = messages)
+                        it.copy(messages = mergePersistedMessages(messages, it.messages))
                     })
                 }
             }
@@ -649,6 +699,40 @@ class ConversationViewModel(
             }
         }
     }
+}
+
+/**
+ * Room is authoritative for completed rows. UI may additionally contain an optimistic user row
+ * or a streaming assistant row which has not reached Room yet.  Never replace the latter with a
+ * snapshot: merge by local ID first, then by the stable server/request ID, and use a deterministic
+ * display order.
+ */
+private fun mergePersistedMessages(
+    persisted: List<ChatMessage>,
+    transient: List<ChatMessage>,
+): List<ChatMessage> {
+    val unmatchedTransient = transient.toMutableList()
+    val merged = persisted.map { stored ->
+        val index = unmatchedTransient.indexOfFirst { ui -> ui.sameMessage(stored) }
+        if (index < 0) stored else mergePersistedMessage(stored, unmatchedTransient.removeAt(index))
+    } + unmatchedTransient
+    return merged.sortedWith(compareBy<ChatMessage> { it.createdAt }.thenBy { it.id })
+}
+
+private fun ChatMessage.sameMessage(other: ChatMessage): Boolean =
+    id == other.id || (serverMessageId != null && serverMessageId == other.serverMessageId)
+
+private fun mergePersistedMessage(stored: ChatMessage, ui: ChatMessage): ChatMessage {
+    // A persisted completed/failed record wins for text and status. Metadata that may have
+    // arrived on the socket just before the atomic Room write is retained until Room catches up.
+    return stored.copy(
+        serverMessageId = stored.serverMessageId ?: ui.serverMessageId,
+        searchQuery = stored.searchQuery ?: ui.searchQuery,
+        sources = stored.sources.ifEmpty { ui.sources },
+        knowledgeSources = stored.knowledgeSources.ifEmpty { ui.knowledgeSources },
+        knowledgeBaseId = stored.knowledgeBaseId ?: ui.knowledgeBaseId,
+        knowledgeQuery = stored.knowledgeQuery ?: ui.knowledgeQuery,
+    )
 }
 
 private object EmptyConversationHistoryRepository : ConversationHistoryRepository {

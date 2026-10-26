@@ -27,6 +27,8 @@ data class ChatMessage(
     val searchQuery: String? = null,
     val sources: List<WebSearchSourceUi> = emptyList(),
     val knowledgeSources: List<KnowledgeSourceUi> = emptyList(),
+    val knowledgeBaseId: String? = null,
+    val knowledgeQuery: String? = null,
     val status: MessageStatus = MessageStatus.COMPLETED,
     val createdAt: Long = 0L,
 )

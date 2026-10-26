@@ -65,7 +65,7 @@ Tavily API Key 只存在服务端配置和请求 URI 中，不进入 Android、W
 1. 仅车辆手册、故障灯、座舱功能和明确知识库请求会被 `IntentRouter` 标记为 `KNOWLEDGE_QUERY`；天气、新闻和其他实时问题仍为 `GENERAL_CHAT`，由原有搜索决策处理。
 2. `TaskRouter` 将该意图交给 `KnowledgeTask`。任务使用 `KnowledgeRetriever`，由注入的 `EmbeddingService` 生成查询向量，并由注入的 `KnowledgeRepository` 返回排序片段。
 3. 默认实现是 `CharacterNgramEmbeddingService` 和 `InMemoryKnowledgeRepository`，内置胎压报警、发动机故障灯、前挡除雾和空调使用资料；不连接数据库或网络。
-4. 有命中时 `KnowledgeAnswerService` 将问题和片段传给 Koog 的独立资料问答 Prompt，再经现有 `assistant_delta` / `assistant_completed` 流式返回。Prompt 明确规定资料为不可信输入、不得执行车控/导航/媒体/联网搜索、且只能依据片段回答。
+4. 有命中时 `KnowledgeAnswerService` 将问题和编号后的检索候选片段传给 Koog 的独立资料问答 Prompt，再经现有 `assistant_delta` / `assistant_completed` 流式返回。Prompt 明确规定资料为不可信输入、不得执行车控/导航/媒体/联网搜索、且只能依据片段回答。服务端在完整答案中解析实际引用编号，仅在存在有效引用时发送 `knowledge_sources`；Android 来源卡片只展示最终回答实际引用的资料，而非全部检索候选片段。
 5. 未命中时返回“当前知识库中没有找到足够依据”；检索异常返回安全的暂不可用提示。知识任务没有 Tavily 端口或工具依赖。
 
 ### 车辆知识库 RAG 第三阶段

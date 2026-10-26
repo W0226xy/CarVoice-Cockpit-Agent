@@ -2,19 +2,25 @@ package com.carvoice.cockpit
 
 import com.carvoice.cockpit.data.ConversationRepository
 import com.carvoice.cockpit.data.ConversationStreamEvent
+import com.carvoice.cockpit.data.ConversationHistoryRepository
+import com.carvoice.cockpit.model.ChatMessage
 import com.carvoice.cockpit.model.ConnectionState
+import com.carvoice.cockpit.model.ConversationSession
 import com.carvoice.cockpit.model.MessageAuthor
+import com.carvoice.cockpit.model.MessageStatus
 import com.carvoice.cockpit.model.ToolExecutionState
 import com.carvoice.cockpit.model.WorkspaceDestination
 import com.carvoice.contracts.SimulatedCockpitStatePayload
 import com.carvoice.contracts.ToolCallStatus
 import com.carvoice.contracts.WebSearchSourcePayload
+import com.carvoice.contracts.KnowledgeSourcePayload
 import com.carvoice.cockpit.ui.conversation.ConversationViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -25,6 +31,107 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ConversationViewModelTest {
+    @Test
+    fun `old Room snapshots do not replace optimistic or streaming messages`() = runBlocking {
+        val repository = FakeConversationRepository()
+        val history = ControllableHistoryRepository()
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default, history)
+        delay(50)
+
+        viewModel.updateInput("第一条")
+        viewModel.sendMessage()
+        delay(50)
+        val request = repository.sent.single()
+        history.emitSessions(emptyList())
+        history.emitMessages(request.conversationId, emptyList())
+        delay(50)
+        assertEquals(listOf("第一条"), viewModel.uiState.value.messages.map { it.content })
+
+        repository.emit(ConversationStreamEvent.AssistantDelta(request.requestId, request.conversationId, "流式回答"))
+        delay(50)
+        history.emitMessages(request.conversationId, emptyList())
+        delay(50)
+        assertEquals(listOf("第一条", "流式回答"), viewModel.uiState.value.messages.map { it.content })
+        assertEquals(MessageStatus.STREAMING, viewModel.uiState.value.messages.last().status)
+    }
+
+    @Test
+    fun `Room replay merges completed messages without duplicates and keeps chronological history`() = runBlocking {
+        val repository = FakeConversationRepository()
+        val history = ControllableHistoryRepository()
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default, history)
+        delay(50)
+        val conversationId = viewModel.uiState.value.activeSessionId
+
+        repeat(3) { index ->
+            viewModel.updateInput("问题${index + 1}")
+            viewModel.sendMessage()
+            delay(30)
+            val request = repository.sent.last()
+            repository.emit(ConversationStreamEvent.AssistantDelta(request.requestId, conversationId, "回答${index + 1}"))
+            repository.emit(ConversationStreamEvent.AssistantCompleted(request.requestId, conversationId))
+            delay(30)
+        }
+        val beforeReplay = viewModel.uiState.value.messages
+        assertEquals(6, beforeReplay.size)
+        history.emitMessages(conversationId, beforeReplay)
+        delay(50)
+
+        assertEquals(6, viewModel.uiState.value.messages.size)
+        assertEquals(
+            listOf("问题1", "回答1", "问题2", "回答2", "问题3", "回答3"),
+            viewModel.uiState.value.messages.map { it.content },
+        )
+    }
+
+    @Test
+    fun `late delta from a background conversation cannot overwrite selected conversation`() = runBlocking {
+        val repository = FakeConversationRepository()
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default)
+        delay(50)
+        viewModel.updateInput("A 的问题")
+        viewModel.sendMessage()
+        delay(50)
+        val requestA = repository.sent.single()
+        repository.emit(ConversationStreamEvent.AssistantDelta(requestA.requestId, requestA.conversationId, "A 的开头"))
+        delay(30)
+
+        viewModel.startNewConversation()
+        viewModel.updateInput("B 的问题")
+        viewModel.sendMessage()
+        delay(50)
+        repository.emit(ConversationStreamEvent.AssistantDelta(requestA.requestId, requestA.conversationId, "不应显示在 B"))
+        delay(50)
+
+        assertEquals(listOf("B 的问题"), viewModel.uiState.value.messages.map { it.content })
+        viewModel.selectConversation(requestA.conversationId)
+        delay(30)
+        assertEquals(listOf("A 的问题", "A 的开头不应显示在 B"), viewModel.uiState.value.messages.map { it.content })
+    }
+
+    @Test
+    fun `reconnect and stale Room emissions retain local complete history`() = runBlocking {
+        val repository = FakeConversationRepository()
+        val history = ControllableHistoryRepository()
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default, history)
+        delay(50)
+        viewModel.updateInput("断线前的问题")
+        viewModel.sendMessage()
+        delay(30)
+        val request = repository.sent.single()
+        repository.emit(ConversationStreamEvent.AssistantDelta(request.requestId, request.conversationId, "断线前的回答"))
+        repository.emit(ConversationStreamEvent.AssistantCompleted(request.requestId, request.conversationId))
+        delay(30)
+
+        repository.connectionState.value = ConnectionState.DISCONNECTED
+        repository.connectionState.value = ConnectionState.CONNECTED
+        history.emitSessions(emptyList())
+        history.emitMessages(request.conversationId, emptyList())
+        delay(50)
+
+        assertEquals(listOf("断线前的问题", "断线前的回答"), viewModel.uiState.value.messages.map { it.content })
+    }
+
     @Test
     fun `deltas append to one assistant message and completion unlocks input`() = runBlocking {
         val repository = FakeConversationRepository()
@@ -463,6 +570,33 @@ class ConversationViewModelTest {
     }
 
     @Test
+    fun `knowledge sources arriving before delta bind once to that request`() = runBlocking {
+        val repository = FakeConversationRepository()
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default)
+        delay(50)
+        viewModel.updateInput("胎压灯亮了怎么办")
+        viewModel.sendMessage()
+        delay(50)
+        val request = repository.sent.single()
+        val event = ConversationStreamEvent.KnowledgeSources(
+            request.requestId, request.conversationId, request.requestId, "manual", "胎压",
+            listOf(KnowledgeSourcePayload(1, "doc-1", "手册", snippet = "胎压资料")),
+        )
+
+        repository.emit(event)
+        repository.emit(event) // WebSocket retries must not duplicate the card's sources.
+        repository.emit(ConversationStreamEvent.AssistantDelta(request.requestId, request.conversationId, "请检查胎压[1]"))
+        delay(50)
+
+        val assistant = viewModel.uiState.value.messages.last()
+        assertEquals(listOf(1), assistant.knowledgeSources.map { it.index })
+        assertEquals("manual", assistant.knowledgeBaseId)
+        repository.emit(ConversationStreamEvent.AssistantCompleted(request.requestId, request.conversationId))
+        delay(50)
+        assertTrue(viewModel.uiState.value.pendingKnowledgeSources.isEmpty())
+    }
+
+    @Test
     fun `disconnect clears pending search and tool state`() = runBlocking {
         val repository = FakeConversationRepository()
         val viewModel = ConversationViewModel(repository, Dispatchers.Default)
@@ -559,4 +693,29 @@ private class FakeConversationRepository : ConversationRepository {
     }
 
     override fun close() = Unit
+}
+
+private class ControllableHistoryRepository : ConversationHistoryRepository {
+    private val sessions = MutableStateFlow<List<ConversationSession>>(emptyList())
+    private val messages = mutableMapOf<String, MutableStateFlow<List<ChatMessage>>>()
+
+    override fun observeSessions() = sessions.asStateFlow()
+    override fun observeMessages(conversationId: String) =
+        messages.getOrPut(conversationId) { MutableStateFlow(emptyList()) }.asStateFlow()
+
+    fun emitSessions(value: List<ConversationSession>) { sessions.value = value }
+    fun emitMessages(conversationId: String, value: List<ChatMessage>) {
+        messages.getOrPut(conversationId) { MutableStateFlow(emptyList()) }.value = value
+    }
+
+    override suspend fun saveUserMessage(session: ConversationSession, message: ChatMessage) = Unit
+    override suspend fun saveCompletedAssistant(
+        conversationId: String,
+        message: ChatMessage,
+        sources: com.carvoice.cockpit.model.WebSearchSourcesUi?,
+        knowledgeSources: com.carvoice.cockpit.model.KnowledgeSourcesUi?,
+    ) = Unit
+    override suspend fun markAssistantFailed(conversationId: String, message: ChatMessage) = Unit
+    override suspend fun deleteConversation(conversationId: String) = Unit
+    override suspend fun recentCompletedMessages(conversationId: String) = emptyList<ChatMessage>()
 }

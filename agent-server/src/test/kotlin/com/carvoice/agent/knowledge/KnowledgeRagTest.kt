@@ -54,6 +54,7 @@ class KnowledgeRagTest {
         )
         val emptyEvents = assertIs<TaskResult.Streaming>(emptyTask.execute(context())).events.toList()
         assertTrue((emptyEvents.filterIsInstance<TaskStreamEvent.Delta>().single()).text.contains("没有找到足够依据"))
+        assertTrue(emptyEvents.none { it is TaskStreamEvent.KnowledgeSources })
 
         val failedTask = KnowledgeTask(
             object : KnowledgeRetriever { override suspend fun search(topic: String): KnowledgeSearchResult = error("offline") },
@@ -61,6 +62,28 @@ class KnowledgeRagTest {
         )
         val failedEvents = assertIs<TaskResult.Streaming>(failedTask.execute(context())).events.toList()
         assertTrue(failedEvents.any { it is TaskStreamEvent.ToolProgress && it.status == com.carvoice.contracts.ToolCallStatus.FAILED })
+    }
+
+    @Test
+    fun `only passages cited by final streamed answer are sent to client`() = runBlocking {
+        val passages = (1..3).map { index -> KnowledgePassage("$index", "资料$index", "内容$index", 1.0) }
+        val task = KnowledgeTask(
+            object : KnowledgeRetriever { override suspend fun search(topic: String) = KnowledgeSearchResult(topic, passages) },
+            object : KnowledgeAnswerService { override fun answer(question: String, passages: List<KnowledgePassage>) = flowOf("答案[1]", "[3][99]") },
+        )
+        val events = assertIs<TaskResult.Streaming>(task.execute(context())).events.toList()
+        val sources = assertIs<TaskStreamEvent.KnowledgeSources>(events.filterIsInstance<TaskStreamEvent.KnowledgeSources>().single())
+        assertEquals(listOf(1, 3), sources.payload.sources.map { it.index })
+    }
+
+    @Test
+    fun `answer without citation sends no knowledge source event`() = runBlocking {
+        val task = KnowledgeTask(
+            object : KnowledgeRetriever { override suspend fun search(topic: String) = KnowledgeSearchResult(topic, listOf(KnowledgePassage("1", "资料", "内容", 1.0))) },
+            object : KnowledgeAnswerService { override fun answer(question: String, passages: List<KnowledgePassage>) = flowOf("没有足够依据") },
+        )
+        val events = assertIs<TaskResult.Streaming>(task.execute(context())).events.toList()
+        assertTrue(events.none { it is TaskStreamEvent.KnowledgeSources })
     }
 
     @Test
