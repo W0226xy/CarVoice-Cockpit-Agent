@@ -4,14 +4,17 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import com.carvoice.cockpit.data.ConversationRepository
 import com.carvoice.cockpit.data.ConversationHistoryRepository
+import com.carvoice.cockpit.ui.speech.NoOpSpeechRecognitionLifecycle
+import com.carvoice.cockpit.ui.speech.SpeechRecognitionLifecycle
 
 class ConversationViewModelFactory(
     private val repository: ConversationRepository,
     private val historyRepository: ConversationHistoryRepository,
+    private val speechLifecycle: SpeechRecognitionLifecycle = NoOpSpeechRecognitionLifecycle,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         require(modelClass.isAssignableFrom(ConversationViewModel::class.java))
-        return ConversationViewModel(repository, historyRepository = historyRepository) as T
+        return ConversationViewModel(repository, historyRepository = historyRepository, speechLifecycle = speechLifecycle) as T
     }
 }

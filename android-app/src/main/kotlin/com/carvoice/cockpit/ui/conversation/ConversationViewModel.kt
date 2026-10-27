@@ -23,6 +23,8 @@ import com.carvoice.cockpit.model.WebSearchSourceUi
 import com.carvoice.cockpit.model.WebSearchSourcesUi
 import com.carvoice.cockpit.model.KnowledgeSourcesUi
 import com.carvoice.cockpit.model.KnowledgeSourceUi
+import com.carvoice.cockpit.ui.speech.NoOpSpeechRecognitionLifecycle
+import com.carvoice.cockpit.ui.speech.SpeechRecognitionLifecycle
 import java.util.UUID
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -38,8 +40,11 @@ class ConversationViewModel(
     private val repository: ConversationRepository,
     private val workerDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
     private val historyRepository: ConversationHistoryRepository = EmptyConversationHistoryRepository,
+    private val speechLifecycle: SpeechRecognitionLifecycle = NoOpSpeechRecognitionLifecycle,
 ) : ViewModel() {
-    private val _uiState = kotlinx.coroutines.flow.MutableStateFlow(ConversationUiState())
+    private val _uiState = kotlinx.coroutines.flow.MutableStateFlow(
+        ConversationUiState(connectionState = repository.connectionState.value),
+    )
     val uiState: kotlinx.coroutines.flow.StateFlow<ConversationUiState> =
         _uiState.asStateFlow()
 
@@ -121,6 +126,32 @@ class ConversationViewModel(
 
     fun updateInput(text: String) {
         _uiState.update { it.copy(inputText = text) }
+    }
+
+    /** ASR stays outside this ViewModel; it only supplies text to the existing message path. */
+    fun onSpeechPartialResult(text: String) {
+        _uiState.update { it.copy(inputText = text) }
+    }
+
+    fun onSpeechFinalResult(text: String) {
+        val result = text.trim()
+        if (result.isEmpty()) return
+        _uiState.update { it.copy(inputText = result) }
+        val state = _uiState.value
+        if (state.pendingVehicleAction != null) {
+            onSpeechRecognitionError("请先完成当前模拟座舱确认，再使用语音输入。", retryable = true)
+            return
+        }
+        // sendMessage intentionally owns connection handling so disconnected speech remains editable.
+        if (!state.isAssistantResponding) sendMessage()
+    }
+
+    fun onSpeechRecognitionError(message: String, retryable: Boolean) {
+        _uiState.update { it.copy(error = ConversationErrorUi(message, retryable)) }
+    }
+
+    fun clearSpeechPreview() {
+        // The preview is represented by inputText, so no separate speech state is retained here.
     }
 
     /** Kept independently of UI navigation so outgoing WebSocket requests remain scoped. */
@@ -219,6 +250,7 @@ class ConversationViewModel(
 
     fun selectConversation(sessionId: String) {
         if (_uiState.value.sessions.none { it.id == sessionId }) return
+        speechLifecycle.cancelListening()
         _uiState.update {
             it.copy(
                 sessions = it.sessions.moveSessionToFront(sessionId),
@@ -262,6 +294,7 @@ class ConversationViewModel(
     }
 
     fun startNewConversation() {
+        speechLifecycle.cancelListening()
         val newSession = createEmptyConversationSession()
         _uiState.update {
             it.copy(
@@ -294,6 +327,7 @@ class ConversationViewModel(
     fun confirmDeleteConversation() {
         val state = _uiState.value
         val targetId = state.deleteTargetConversationId ?: return
+        speechLifecycle.cancelListening()
         if (state.sessions.none { it.id == targetId }) {
             cancelDeleteConversation()
             return
@@ -336,6 +370,7 @@ class ConversationViewModel(
     }
 
     override fun onCleared() {
+        speechLifecycle.release()
         repository.close()
         super.onCleared()
     }

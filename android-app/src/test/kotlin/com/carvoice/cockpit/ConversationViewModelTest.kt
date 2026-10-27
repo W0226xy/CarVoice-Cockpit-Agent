@@ -15,6 +15,7 @@ import com.carvoice.contracts.ToolCallStatus
 import com.carvoice.contracts.WebSearchSourcePayload
 import com.carvoice.contracts.KnowledgeSourcePayload
 import com.carvoice.cockpit.ui.conversation.ConversationViewModel
+import com.carvoice.cockpit.ui.speech.SpeechRecognitionLifecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -31,6 +32,71 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ConversationViewModelTest {
+    @Test
+    fun `speech partial result previews input without sending`() = runBlocking {
+        val repository = FakeConversationRepository()
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default)
+
+        viewModel.onSpeechPartialResult("把空调调到")
+        delay(30)
+
+        assertEquals("把空调调到", viewModel.uiState.value.inputText)
+        assertTrue(repository.sent.isEmpty())
+    }
+
+    @Test
+    fun `speech final result sends exactly once through existing message path`() = runBlocking {
+        val repository = FakeConversationRepository()
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default)
+
+        viewModel.onSpeechFinalResult("把空调调到二十三度")
+        delay(50)
+
+        assertEquals(1, repository.sent.size)
+        assertEquals("把空调调到二十三度", repository.sent.single().message)
+        assertEquals("把空调调到二十三度", viewModel.uiState.value.messages.single().content)
+    }
+
+    @Test
+    fun `blank speech final result does not send`() = runBlocking {
+        val repository = FakeConversationRepository()
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default)
+
+        viewModel.onSpeechFinalResult("   ")
+        delay(30)
+
+        assertTrue(repository.sent.isEmpty())
+        assertEquals("", viewModel.uiState.value.inputText)
+    }
+
+    @Test
+    fun `disconnected speech final result remains editable and exposes connection error`() = runBlocking {
+        val repository = FakeConversationRepository()
+        repository.connectionState.value = ConnectionState.DISCONNECTED
+        val viewModel = ConversationViewModel(repository, Dispatchers.Default)
+
+        viewModel.onSpeechFinalResult("检查胎压")
+        delay(50)
+
+        assertTrue(repository.sent.isEmpty())
+        assertEquals("检查胎压", viewModel.uiState.value.inputText)
+        assertEquals("服务尚未连接，请连接后重试。", viewModel.uiState.value.error?.message)
+    }
+
+    @Test
+    fun `switching conversations stops active speech recognition`() {
+        val speech = FakeSpeechLifecycle()
+        val viewModel = ConversationViewModel(
+            FakeConversationRepository(),
+            Dispatchers.Default,
+            speechLifecycle = speech,
+        )
+
+        viewModel.startNewConversation()
+
+        assertEquals(1, speech.stopCalls)
+    }
+
     @Test
     fun `old Room snapshots do not replace optimistic or streaming messages`() = runBlocking {
         val repository = FakeConversationRepository()
@@ -693,6 +759,14 @@ private class FakeConversationRepository : ConversationRepository {
     }
 
     override fun close() = Unit
+}
+
+private class FakeSpeechLifecycle : SpeechRecognitionLifecycle {
+    var stopCalls = 0
+    var releaseCalls = 0
+    override fun stopListening() { stopCalls += 1 }
+    override fun cancelListening() { stopCalls += 1 }
+    override fun release() { releaseCalls += 1 }
 }
 
 private class ControllableHistoryRepository : ConversationHistoryRepository {

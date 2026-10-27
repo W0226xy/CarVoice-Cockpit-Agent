@@ -20,12 +20,16 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import android.Manifest
+import android.content.pm.PackageManager
 import com.carvoice.cockpit.BuildConfig
 import com.carvoice.cockpit.data.AgentConnection
 import com.carvoice.cockpit.data.AgentConnectionConfig
@@ -35,6 +39,7 @@ import com.carvoice.cockpit.data.UploadDocument
 import com.carvoice.cockpit.data.local.CarVoiceDatabase
 import com.carvoice.cockpit.data.local.RoomConversationHistoryRepository
 import com.carvoice.cockpit.model.WorkspaceDestination
+import com.carvoice.cockpit.model.ConnectionState
 import com.carvoice.cockpit.ui.conversation.ConversationScreen
 import com.carvoice.cockpit.ui.conversation.ConversationUiState
 import com.carvoice.cockpit.ui.conversation.ConversationViewModel
@@ -44,6 +49,8 @@ import com.carvoice.cockpit.ui.knowledge.KnowledgeBaseViewModel
 import com.carvoice.cockpit.ui.knowledge.KnowledgeBaseViewModelFactory
 import com.carvoice.cockpit.ui.sidebar.ChatSidebar
 import com.carvoice.cockpit.ui.sidebar.DeleteConversationDialog
+import com.carvoice.cockpit.ui.speech.AndroidSpeechRecognitionController
+import com.carvoice.cockpit.ui.speech.SpeechRecognitionState
 import kotlinx.coroutines.launch
 
 @Composable
@@ -53,6 +60,11 @@ fun CarVoiceApp(
     externalLinkOpener: ExternalLinkOpener? = null,
 ) {
     val context = LocalContext.current
+    val speechController = remember(context) { AndroidSpeechRecognitionController(context) }
+    val speechState by speechController.state.collectAsState()
+    DisposableEffect(speechController) {
+        onDispose { speechController.release() }
+    }
     val resolvedLinkOpener = remember(externalLinkOpener, context) {
         externalLinkOpener ?: AndroidExternalLinkOpener(context)
     }
@@ -63,10 +75,41 @@ fun CarVoiceApp(
                 AgentConnection(AgentConnectionConfig(BuildConfig.CHAT_WS_URL)),
             ),
             RoomConversationHistoryRepository(CarVoiceDatabase.create(context)),
+            speechController,
         )
     }
     val resolvedViewModel = conversationViewModel ?: viewModel(factory = defaultFactory)
     val conversationState by resolvedViewModel.uiState.collectAsState()
+    val audioPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted -> speechController.onPermissionResult(granted) }
+    LaunchedEffect(speechState) {
+        if (speechState is SpeechRecognitionState.RequestingPermission) {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                speechController.onPermissionResult(true)
+            } else {
+                audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            }
+        }
+    }
+    LaunchedEffect(conversationState.activeSessionId, conversationState.destination) {
+        // A recognizer is scoped to the visible conversation, never a background destination/session.
+        speechController.cancelListening()
+    }
+    LaunchedEffect(speechState) {
+        when (val state = speechState) {
+            is SpeechRecognitionState.PartialResult -> resolvedViewModel.onSpeechPartialResult(state.text)
+            is SpeechRecognitionState.FinalResult -> {
+                resolvedViewModel.onSpeechFinalResult(state.text)
+                speechController.reset()
+            }
+            is SpeechRecognitionState.Error -> {
+                resolvedViewModel.onSpeechRecognitionError(state.message, state.retryable)
+                speechController.reset()
+            }
+            else -> Unit
+        }
+    }
     val selectedKnowledgeBaseId by knowledgeRepository.observeSelectedKnowledgeBaseId().collectAsState(initial = null)
     LaunchedEffect(selectedKnowledgeBaseId) { resolvedViewModel.updateSelectedKnowledgeBase(selectedKnowledgeBaseId) }
     val knowledgeFactory = remember(knowledgeRepository) { KnowledgeBaseViewModelFactory(knowledgeRepository) }
@@ -138,6 +181,14 @@ fun CarVoiceApp(
                             knowledgeState = knowledgeState,
                             knowledgeViewModel = knowledgeViewModel,
                             onPickDocument = { documentPicker.launch(arrayOf("application/pdf", "text/plain")) },
+                            speechState = speechState,
+                            onVoiceClick = {
+                                when (speechState) {
+                                    is SpeechRecognitionState.Listening, is SpeechRecognitionState.PartialResult -> speechController.stopListening()
+                                    is SpeechRecognitionState.Processing, SpeechRecognitionState.RequestingPermission -> Unit
+                                    else -> speechController.startListening()
+                                }
+                            },
                         )
                     }
                 }
@@ -169,6 +220,14 @@ fun CarVoiceApp(
                         knowledgeState = knowledgeState,
                         knowledgeViewModel = knowledgeViewModel,
                         onPickDocument = { documentPicker.launch(arrayOf("application/pdf", "text/plain")) },
+                        speechState = speechState,
+                        onVoiceClick = {
+                            when (speechState) {
+                                is SpeechRecognitionState.Listening, is SpeechRecognitionState.PartialResult -> speechController.stopListening()
+                                is SpeechRecognitionState.Processing, SpeechRecognitionState.RequestingPermission -> Unit
+                                else -> speechController.startListening()
+                            }
+                        },
                     )
                 }
             }
@@ -191,6 +250,8 @@ private fun WorkspaceContent(
     knowledgeState: com.carvoice.cockpit.ui.knowledge.KnowledgeBaseUiState,
     knowledgeViewModel: KnowledgeBaseViewModel,
     onPickDocument: () -> Unit,
+    speechState: SpeechRecognitionState,
+    onVoiceClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     when (state.destination) {
@@ -203,6 +264,10 @@ private fun WorkspaceContent(
             onCancelVehicleAction = viewModel::cancelVehicleAction,
             onConfirmVehicleAction = viewModel::confirmVehicleAction,
             onRetry = viewModel::retry,
+            speechState = speechState,
+            isVoiceEnabled = state.connectionState == ConnectionState.CONNECTED &&
+                !state.isAssistantResponding && state.pendingVehicleAction == null,
+            onVoiceClick = onVoiceClick,
             onOpenSource = onOpenSource,
             modifier = modifier.fillMaxSize(),
         )

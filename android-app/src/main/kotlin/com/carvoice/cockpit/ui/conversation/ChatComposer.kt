@@ -23,10 +23,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.carvoice.cockpit.ui.theme.CarVoiceCockpitTheme
+import com.carvoice.cockpit.ui.speech.SpeechRecognitionState
 
 @Composable
 fun ChatComposer(
@@ -34,6 +37,9 @@ fun ChatComposer(
     onTextChange: (String) -> Unit,//用户修改文字时，通知外部更新状态
     onSend: () -> Unit,//用户点击发送或按键盘发送键时，执行的操作
     isReplying: Boolean,//助手是否正在回复
+    speechState: SpeechRecognitionState = SpeechRecognitionState.Idle,
+    isVoiceEnabled: Boolean = true,
+    onVoiceClick: () -> Unit = {},
     modifier: Modifier = Modifier,//允许外部设置组件的大小、间距等
 ) {
     //输入不为空/当前没有回复才可以发送信息
@@ -53,12 +59,24 @@ fun ChatComposer(
             horizontalArrangement = Arrangement.spacedBy(8.dp),//子组件之间间隔 8dp
             verticalAlignment = Alignment.Bottom,//子组件沿底部对齐
         ) {
-            TextButton(//语音按钮
-                enabled = false,//语音功能暂未启用
-                onClick = {},//预留语音输入的处理逻辑
-                modifier = Modifier.defaultMinSize(minWidth = 54.dp, minHeight = 48.dp),//设置最小宽度 54dp、最小高度 48dp，保证可点击区域足够大
+            val isListening = speechState is SpeechRecognitionState.Listening ||
+                speechState is SpeechRecognitionState.PartialResult
+            val isProcessing = speechState is SpeechRecognitionState.Processing
+            TextButton(
+                enabled = isVoiceEnabled && !isProcessing,
+                onClick = onVoiceClick,
+                modifier = Modifier
+                    .defaultMinSize(minWidth = 54.dp, minHeight = 48.dp)
+                    .testTag("voice-input")
+                    .semantics {
+                        contentDescription = when {
+                            isListening -> "正在聆听，再次点击停止"
+                            isProcessing -> "正在识别语音"
+                            else -> "开始语音输入"
+                        }
+                    },
             ) {
-                Text("语音")//显示文字"语音"
+                Text(if (isListening) "停止" else if (isProcessing) "识别中" else "🎙")
             }
 
             BasicTextField(//多行文本输入框，最多显示 4 行

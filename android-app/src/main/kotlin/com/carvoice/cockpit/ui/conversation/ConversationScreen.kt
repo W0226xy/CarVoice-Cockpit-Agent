@@ -28,6 +28,7 @@ import com.carvoice.cockpit.ui.components.ToolExecutionCard
 import com.carvoice.cockpit.ui.components.VehicleActionConfirm
 import com.carvoice.cockpit.ui.components.SimulatedCockpitStateCard
 import com.carvoice.cockpit.ui.theme.CarVoiceCockpitTheme
+import com.carvoice.cockpit.ui.speech.SpeechRecognitionState
 import kotlinx.coroutines.delay
 
 @Composable
@@ -40,6 +41,9 @@ fun ConversationScreen(
     onCancelVehicleAction: () -> Unit,
     onConfirmVehicleAction: () -> Unit,
     onRetry: () -> Unit,
+    speechState: SpeechRecognitionState = SpeechRecognitionState.Idle,
+    isVoiceEnabled: Boolean = true,
+    onVoiceClick: () -> Unit = {},
     onOpenSource: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -158,7 +162,18 @@ fun ConversationScreen(
                 onTextChange = onInputChange,
                 onSend = onSend,
                 isReplying = state.isAssistantResponding,
+                speechState = speechState,
+                isVoiceEnabled = isVoiceEnabled,
+                onVoiceClick = onVoiceClick,
             )
+            if (speechState is SpeechRecognitionState.Listening || speechState is SpeechRecognitionState.PartialResult) {
+                Text(
+                    text = "正在聆听…",
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
             Text(
                 text = "模拟座舱 · 仅运行期内存状态，不连接真实车辆",
                 modifier = Modifier.align(Alignment.CenterHorizontally),
