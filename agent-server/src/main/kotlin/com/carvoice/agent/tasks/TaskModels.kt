@@ -31,6 +31,10 @@ sealed interface TaskResult {
         val state: SimulatedCockpitStatePayload?,
         val cancelled: Boolean = false,
     ) : TaskResult
+    data class NavigationAction(
+        val actionId: String,
+        val destination: String,
+    ) : TaskResult
     data class Failure(val code: String, val message: String) : TaskResult
 }
 

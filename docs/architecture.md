@@ -28,7 +28,8 @@ TaskRouter (deterministic when)
         +--> ChatTask -> Koog streaming
         |       +--> SearchDecision -> optional WebSearchPort
         |       +--> Tavily MCP search -> bounded untrusted context
-        +--> NavigationTask / MediaTask -> recognition only
+        +--> NavigationTask -> navigation_action -> Android geo map search -> execution result
+        +--> MediaTask -> recognition only
         +--> KnowledgeTask -> KnowledgeRetriever -> EmbeddingService + KnowledgeRepository -> dedicated Koog RAG answer stream
         +--> SimulatedCockpitTask -> confirmation -> in-memory state
         +--> ClarificationTask
@@ -98,4 +99,4 @@ pgvector 的 `document_chunks.embedding` 是 Flyway placeholder 生成的 `vecto
 - `com.carvoice.agent.tools`：工具注册、风险策略与 Mock 能力；
 - `com.carvoice.contracts`：跨端统一协议模型。
 
-`ClientAction.Navigate` 与 `ClientAction.PlayMedia` 仅作为未来 Android 动作领域边界，本阶段不会通过协议发送或执行。第一阶段 RAG 不包含持久化、pgvector 或文档上传；真实地图/媒体 App、真实车控和鉴权均未实现。
+导航地点搜索通过通用 Android `ACTION_VIEW` + `geo:0,0?q=<encoded destination>` 执行。成功仅表示地图应用已被打开以搜索地点，不能推断路线规划或导航状态。动作等待状态仅存于服务端内存并绑定当前 WebSocket；断线、取消、超时和服务重启均会清理，不会自动重放外部 App 启动。

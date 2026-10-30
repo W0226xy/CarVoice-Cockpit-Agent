@@ -16,6 +16,8 @@ object SocketEventType {
     const val WEB_SEARCH_SOURCES = "web_search_sources"
     const val KNOWLEDGE_SOURCES = "knowledge_sources"
     const val CONVERSATION_SYNC = "conversation_sync"
+    const val NAVIGATION_ACTION = "navigation_action"
+    const val NAVIGATION_EXECUTION_RESULT = "navigation_execution_result"
 }
 
 object ChatProtocol {
@@ -128,3 +130,25 @@ data class WebSearchSourcePayload(
 
 @Serializable data class KnowledgeSourcesPayload(val conversationId:String,val messageId:String,val knowledgeBaseId:String,val query:String,val sources:List<KnowledgeSourcePayload>)
 @Serializable data class KnowledgeSourcePayload(val index:Int,val documentId:String,val documentName:String,val pageNumber:Int?=null,val sectionTitle:String?=null,val snippet:String)
+
+/** A request to hand a text destination to a map application on the client device. */
+@Serializable
+data class NavigationActionPayload(
+    val actionId: String,
+    val actionType: NavigationActionType,
+    val destination: String,
+)
+
+@Serializable
+enum class NavigationActionType { OPEN_MAP_SEARCH }
+
+/** Reports only whether Android handed the request to a map app, not route progress. */
+@Serializable
+data class NavigationExecutionResultPayload(
+    val actionId: String,
+    val status: NavigationExecutionStatus,
+    val errorMessage: String? = null,
+)
+
+@Serializable
+enum class NavigationExecutionStatus { MAP_APP_LAUNCHED, NO_MAP_APP, LAUNCH_FAILED, USER_CANCELLED }

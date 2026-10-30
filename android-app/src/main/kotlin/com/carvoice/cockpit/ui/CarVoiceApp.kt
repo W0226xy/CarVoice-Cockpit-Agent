@@ -51,6 +51,7 @@ import com.carvoice.cockpit.ui.sidebar.ChatSidebar
 import com.carvoice.cockpit.ui.sidebar.DeleteConversationDialog
 import com.carvoice.cockpit.ui.speech.AndroidSpeechRecognitionController
 import com.carvoice.cockpit.ui.speech.SpeechRecognitionState
+import com.carvoice.cockpit.navigation.AndroidNavigationExecutor
 import kotlinx.coroutines.launch
 
 @Composable
@@ -76,6 +77,7 @@ fun CarVoiceApp(
             ),
             RoomConversationHistoryRepository(CarVoiceDatabase.create(context)),
             speechController,
+            AndroidNavigationExecutor(context.applicationContext),
         )
     }
     val resolvedViewModel = conversationViewModel ?: viewModel(factory = defaultFactory)

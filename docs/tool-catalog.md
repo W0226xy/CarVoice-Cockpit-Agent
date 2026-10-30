@@ -57,7 +57,7 @@
 - **返回结果**：`navigationId: string`、`resolvedDestination: string`、`status: string`。
 - **风险等级**：低风险执行。
 - **二次确认**：否；目的地不明确时必须先追问，而非猜测。
-- **执行边界**：本阶段不执行导航、不启动 App、不调用地图 API；仅预留 `ClientAction.Navigate`。
+- **执行边界**：Android 以通用 `geo:` Intent 打开可处理的地图应用并搜索文本目的地；不调用地图 SDK/API，不需要 Key，也不表示路线已规划或导航已开始。
 
 ### `control_media`
 

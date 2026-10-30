@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.encodeToJsonElement
+import java.util.UUID
 
 class ChatSessionHandler(
     private val conversationService: ConversationService,
@@ -25,6 +26,7 @@ class ChatSessionHandler(
         val sendMutex = Mutex()
         val history = mutableMapOf<String, MutableList<ConversationTurn>>()
         var activeJob: Job? = null
+        val connectionId = UUID.randomUUID().toString()
 
         suspend fun emit(event: SocketEvent) {
             sendMutex.withLock {
@@ -67,6 +69,7 @@ class ChatSessionHandler(
                         SocketEventType.CHAT_REQUEST,
                         SocketEventType.CONTROL_CONFIRMATION_RESPONSE,
                         SocketEventType.CONVERSATION_SYNC,
+                        SocketEventType.NAVIGATION_EXECUTION_RESULT,
                     )
                 ) {
                     emit(
@@ -77,6 +80,13 @@ class ChatSessionHandler(
                             "不支持的事件类型。",
                         ),
                     )
+                    continue
+                }
+                // A navigation task intentionally waits for this event. It must bypass the
+                // single active task guard, but the coordinator still verifies all IDs and the
+                // connection token before it can complete anything.
+                if (event.type == SocketEventType.NAVIGATION_EXECUTION_RESULT) {
+                    conversationService.handleNavigationExecutionResult(event, connectionId)
                     continue
                 }
                 if (activeJob?.isActive == true) {
@@ -98,13 +108,15 @@ class ChatSessionHandler(
                 activeJob = launch {
                     when (event.type) {
                         SocketEventType.CHAT_REQUEST ->
-                            conversationService.handleChat(event, history, ::emit)
+                            conversationService.handleChat(event, history, connectionId, ::emit)
                         SocketEventType.CONTROL_CONFIRMATION_RESPONSE ->
                             conversationService.handleControlConfirmation(event, history, ::emit)
+                        else -> Unit
                     }
                 }
             }
         } finally {
+            conversationService.cancelNavigationForConnection(connectionId)
             activeJob?.cancelAndJoin()
         }
     }

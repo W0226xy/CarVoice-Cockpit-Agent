@@ -16,6 +16,10 @@ import com.carvoice.contracts.WebSearchSourcePayload
 import com.carvoice.contracts.KnowledgeSourcePayload
 import com.carvoice.cockpit.ui.conversation.ConversationViewModel
 import com.carvoice.cockpit.ui.speech.SpeechRecognitionLifecycle
+import com.carvoice.cockpit.navigation.NavigationExecution
+import com.carvoice.cockpit.navigation.NavigationExecutor
+import com.carvoice.contracts.NavigationExecutionStatus
+import com.carvoice.contracts.NavigationActionType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -32,6 +36,35 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ConversationViewModelTest {
+    @Test
+    fun `navigation action executes once and returns to its original conversation`() = runBlocking {
+        val repository = FakeConversationRepository()
+        val executor = FakeNavigationExecutor()
+        val viewModel = ConversationViewModel(
+            repository,
+            Dispatchers.Default,
+            navigationExecutor = executor,
+        )
+        val originalConversation = viewModel.uiState.value.activeSessionId
+        viewModel.startNewConversation()
+        repository.emit(
+            ConversationStreamEvent.NavigationAction(
+                "navigation-request", originalConversation, "action-1", NavigationActionType.OPEN_MAP_SEARCH, "扬州东站",
+            ),
+        )
+        repository.emit(
+            ConversationStreamEvent.NavigationAction(
+                "navigation-request", originalConversation, "action-1", NavigationActionType.OPEN_MAP_SEARCH, "扬州东站",
+            ),
+        )
+        delay(80)
+
+        assertEquals(1, executor.destinations.size)
+        assertEquals("扬州东站", executor.destinations.single())
+        assertEquals(1, repository.navigationResults.size)
+        assertEquals(originalConversation, repository.navigationResults.single().conversationId)
+    }
+
     @Test
     fun `speech partial result previews input without sending`() = runBlocking {
         val repository = FakeConversationRepository()
@@ -727,6 +760,8 @@ private class FakeConversationRepository : ConversationRepository {
         val confirmed: Boolean,
     )
     val confirmations = mutableListOf<Confirmation>()
+    data class NavigationResult(val conversationId: String, val requestId: String, val actionId: String)
+    val navigationResults = mutableListOf<NavigationResult>()
 
     override fun connect() = Unit
 
@@ -749,6 +784,17 @@ private class FakeConversationRepository : ConversationRepository {
         return Result.success(Unit)
     }
 
+    override suspend fun sendNavigationExecutionResult(
+        conversationId: String,
+        requestId: String,
+        actionId: String,
+        status: com.carvoice.contracts.NavigationExecutionStatus,
+        errorMessage: String?,
+    ): Result<Unit> {
+        navigationResults += NavigationResult(conversationId, requestId, actionId)
+        return Result.success(Unit)
+    }
+
     override suspend fun syncConversation(
         conversationId: String,
         messages: List<com.carvoice.cockpit.data.ConversationSyncMessage>,
@@ -767,6 +813,14 @@ private class FakeSpeechLifecycle : SpeechRecognitionLifecycle {
     override fun stopListening() { stopCalls += 1 }
     override fun cancelListening() { stopCalls += 1 }
     override fun release() { releaseCalls += 1 }
+}
+
+private class FakeNavigationExecutor : NavigationExecutor {
+    val destinations = mutableListOf<String>()
+    override fun openMapSearch(destination: String): NavigationExecution {
+        destinations += destination
+        return NavigationExecution(NavigationExecutionStatus.MAP_APP_LAUNCHED)
+    }
 }
 
 private class ControllableHistoryRepository : ConversationHistoryRepository {

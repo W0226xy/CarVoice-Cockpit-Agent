@@ -16,6 +16,9 @@ import com.carvoice.contracts.KnowledgeSourcesPayload
 import com.carvoice.contracts.ConversationSyncPayload
 import com.carvoice.contracts.ConversationSyncMessage as ProtocolSyncMessage
 import com.carvoice.contracts.ConversationSyncRole
+import com.carvoice.contracts.NavigationActionPayload
+import com.carvoice.contracts.NavigationExecutionResultPayload
+import com.carvoice.contracts.NavigationExecutionStatus
 import java.net.URI
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
@@ -154,6 +157,19 @@ class WebSocketConversationRepository(
                     ConversationStreamEvent.KnowledgeSources(requestId,conversationId,payload.messageId,payload.knowledgeBaseId,payload.query.take(200),payload.sources.filter { it.index>0&&it.documentId.isNotBlank() }.distinctBy { it.index to it.documentId })
                 }
 
+                SocketEventType.NAVIGATION_ACTION -> {
+                    val requestId = event.requestId ?: return malformedEvent(event)
+                    val conversationId = event.conversationId ?: return malformedEvent(event)
+                    val payload = event.decodePayload<NavigationActionPayload>()
+                        ?: return malformedEvent(event)
+                    if (payload.actionId.isBlank() || payload.destination.isBlank()) {
+                        return malformedEvent(event)
+                    }
+                    ConversationStreamEvent.NavigationAction(
+                        requestId, conversationId, payload.actionId, payload.actionType, payload.destination.trim(),
+                    )
+                }
+
                 else -> null
         }
     }
@@ -186,6 +202,23 @@ class WebSocketConversationRepository(
             conversationId = conversationId,
             payload = json.encodeToJsonElement(
                 ControlConfirmationResponsePayload(confirmationId, confirmed),
+            ),
+        ),
+    )
+
+    override suspend fun sendNavigationExecutionResult(
+        conversationId: String,
+        requestId: String,
+        actionId: String,
+        status: NavigationExecutionStatus,
+        errorMessage: String?,
+    ): Result<Unit> = connection.send(
+        SocketEvent(
+            type = SocketEventType.NAVIGATION_EXECUTION_RESULT,
+            requestId = requestId,
+            conversationId = conversationId,
+            payload = json.encodeToJsonElement(
+                NavigationExecutionResultPayload(actionId, status, errorMessage?.take(200)),
             ),
         ),
     )

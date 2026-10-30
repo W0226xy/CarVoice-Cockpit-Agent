@@ -23,6 +23,9 @@ import com.carvoice.contracts.WebSearchSourcesPayload
 import com.carvoice.contracts.ConversationSyncPayload
 import com.carvoice.contracts.ConversationSyncMessage
 import com.carvoice.contracts.ConversationSyncRole
+import com.carvoice.contracts.NavigationActionPayload
+import com.carvoice.contracts.NavigationExecutionResultPayload
+import com.carvoice.contracts.NavigationExecutionStatus
 import io.ktor.client.call.body
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.websocket.WebSockets
@@ -108,6 +111,96 @@ class ApplicationTest {
             }
             assertTrue(events.any { it.type == SocketEventType.ASSISTANT_DELTA })
             assertEquals(SocketEventType.ASSISTANT_COMPLETED, events.last().type)
+        }
+    }
+
+    @Test
+    fun `navigation waits for matching client result before final reply`() = testApplication {
+        application { module(config, agent, tavilyConfig) }
+        val client = createClient { install(WebSockets) }
+
+        client.webSocket("/ws/chat") {
+            receiveEvent()
+            send(Frame.Text(codec.encode(SocketEvent(
+                SocketEventType.CHAT_REQUEST,
+                "navigation-request",
+                "navigation-conversation",
+                codec.json.encodeToJsonElement(ChatRequestPayload("导航到扬州东站")),
+            ))))
+            var actionEvent: SocketEvent? = null
+            withTimeout(3_000) {
+                while (actionEvent == null) {
+                    val candidate = receiveEvent()
+                    if (candidate.type == SocketEventType.NAVIGATION_ACTION) actionEvent = candidate
+                }
+            }
+            val action = codec.json.decodeFromJsonElement<NavigationActionPayload>(
+                requireNotNull(actionEvent?.payload),
+            )
+            assertEquals("扬州东站", action.destination)
+            send(Frame.Text(codec.encode(SocketEvent(
+                SocketEventType.NAVIGATION_EXECUTION_RESULT,
+                "navigation-request",
+                "navigation-conversation",
+                codec.json.encodeToJsonElement(NavigationExecutionResultPayload(
+                    action.actionId,
+                    NavigationExecutionStatus.MAP_APP_LAUNCHED,
+                )),
+            ))))
+            val events = mutableListOf<SocketEvent>()
+            withTimeout(3_000) {
+                while (events.none { it.type == SocketEventType.ASSISTANT_COMPLETED }) {
+                    events += receiveEvent()
+                }
+            }
+            val text = events.filter { it.type == SocketEventType.ASSISTANT_DELTA }.joinToString("") {
+                codec.json.decodeFromJsonElement<com.carvoice.contracts.AssistantDeltaPayload>(
+                    requireNotNull(it.payload),
+                ).text
+            }
+            assertEquals("已为你打开地图，请在地图中确认目的地。", text)
+        }
+    }
+
+    @Test
+    fun `navigation reports unavailable map app from client result`() = testApplication {
+        application { module(config, agent, tavilyConfig) }
+        val client = createClient { install(WebSockets) }
+
+        client.webSocket("/ws/chat") {
+            receiveEvent()
+            send(Frame.Text(codec.encode(SocketEvent(
+                SocketEventType.CHAT_REQUEST, "no-map-request", "no-map-conversation",
+                codec.json.encodeToJsonElement(ChatRequestPayload("导航到扬州东站")),
+            ))))
+            var action: NavigationActionPayload? = null
+            withTimeout(3_000) {
+                while (action == null) {
+                    val event = receiveEvent()
+                    if (event.type == SocketEventType.NAVIGATION_ACTION) {
+                        action = codec.json.decodeFromJsonElement(requireNotNull(event.payload))
+                    }
+                }
+            }
+            send(Frame.Text(codec.encode(SocketEvent(
+                SocketEventType.NAVIGATION_EXECUTION_RESULT, "no-map-request", "no-map-conversation",
+                codec.json.encodeToJsonElement(NavigationExecutionResultPayload(
+                    requireNotNull(action).actionId, NavigationExecutionStatus.NO_MAP_APP,
+                )),
+            ))))
+            var response = ""
+            withTimeout(3_000) {
+                while (true) {
+                    val event = receiveEvent()
+                    if (event.type == SocketEventType.ASSISTANT_DELTA) {
+                        response += codec.json.decodeFromJsonElement<com.carvoice.contracts.AssistantDeltaPayload>(
+                            requireNotNull(event.payload),
+                        ).text
+                    }
+                    if (event.type == SocketEventType.ASSISTANT_COMPLETED) break
+                }
+            }
+            assertEquals("未找到可处理地点搜索的地图应用。", response)
         }
     }
 

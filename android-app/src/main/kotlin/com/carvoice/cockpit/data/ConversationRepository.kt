@@ -24,6 +24,14 @@ interface ConversationRepository {
         confirmed: Boolean,
     ): Result<Unit>
 
+    suspend fun sendNavigationExecutionResult(
+        conversationId: String,
+        requestId: String,
+        actionId: String,
+        status: com.carvoice.contracts.NavigationExecutionStatus,
+        errorMessage: String? = null,
+    ): Result<Unit>
+
     suspend fun syncConversation(
         conversationId: String,
         messages: List<ConversationSyncMessage>,
@@ -92,4 +100,12 @@ sealed interface ConversationStreamEvent {
     ) : ConversationStreamEvent
 
     data class KnowledgeSources(override val requestId:String,override val conversationId:String,val messageId:String,val knowledgeBaseId:String,val query:String,val sources:List<com.carvoice.contracts.KnowledgeSourcePayload>) : ConversationStreamEvent
+
+    data class NavigationAction(
+        override val requestId: String,
+        override val conversationId: String,
+        val actionId: String,
+        val actionType: com.carvoice.contracts.NavigationActionType,
+        val destination: String,
+    ) : ConversationStreamEvent
 }

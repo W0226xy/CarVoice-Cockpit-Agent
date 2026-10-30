@@ -3,6 +3,8 @@ package com.carvoice.agent.service
 import com.carvoice.agent.agent.ConversationRole
 import com.carvoice.agent.agent.ConversationTurn
 import com.carvoice.agent.intent.IntentRouter
+import com.carvoice.agent.navigation.NavigationActionCoordinator
+import com.carvoice.agent.navigation.NavigationActionCoordinator.NavigationAwaitResult
 import com.carvoice.agent.routing.TaskRouter
 import com.carvoice.agent.tasks.TaskContext
 import com.carvoice.agent.tasks.TaskResult
@@ -12,6 +14,10 @@ import com.carvoice.contracts.AssistantDeltaPayload
 import com.carvoice.contracts.ChatProtocol
 import com.carvoice.contracts.ChatRequestPayload
 import com.carvoice.contracts.ControlConfirmationResponsePayload
+import com.carvoice.contracts.NavigationActionPayload
+import com.carvoice.contracts.NavigationActionType
+import com.carvoice.contracts.NavigationExecutionResultPayload
+import com.carvoice.contracts.NavigationExecutionStatus
 import com.carvoice.contracts.SocketErrorPayload
 import com.carvoice.contracts.SocketEvent
 import com.carvoice.contracts.SocketEventType
@@ -31,6 +37,7 @@ class ConversationService(
     private val intentRouter: IntentRouter,
     private val taskRouter: TaskRouter,
     private val json: Json,
+    private val navigationCoordinator: NavigationActionCoordinator = NavigationActionCoordinator(),
 ) {
     /** Replaces, rather than appends, a conversation snapshot so reconnects are idempotent. */
     suspend fun handleConversationSync(
@@ -71,6 +78,7 @@ class ConversationService(
     suspend fun handleChat(
         event: SocketEvent,
         sessionHistory: MutableMap<String, MutableList<ConversationTurn>>,
+        connectionId: String,
         emit: suspend (SocketEvent) -> Unit,
     ) {
         val identifiers = validateIdentifiers(event, emit) ?: return
@@ -114,7 +122,7 @@ class ConversationService(
             val result = task.execute(
                 TaskContext(requestId, conversationId, message, intent, snapshot, payload?.knowledgeBaseId),
             )
-            emitResult(result, requestId, conversationId, history, emit)
+            emitResult(result, requestId, conversationId, history, connectionId, emit)
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -165,7 +173,21 @@ class ConversationService(
             payload.confirmed,
         )
         val history = sessionHistory.getOrPut(conversationId) { mutableListOf() }
-        emitResult(result, requestId, conversationId, history, emit)
+        emitResult(result, requestId, conversationId, history, "", emit)
+    }
+
+    suspend fun handleNavigationExecutionResult(event: SocketEvent, connectionId: String) {
+        val requestId = event.requestId ?: return
+        val conversationId = event.conversationId ?: return
+        val payload = runCatching {
+            event.payload?.let { json.decodeFromJsonElement<NavigationExecutionResultPayload>(it) }
+        }.getOrNull() ?: return
+        if (payload.actionId.isBlank()) return
+        navigationCoordinator.complete(requestId, conversationId, connectionId, payload)
+    }
+
+    suspend fun cancelNavigationForConnection(connectionId: String) {
+        navigationCoordinator.cancelConnection(connectionId)
     }
 
     private suspend fun emitResult(
@@ -173,6 +195,7 @@ class ConversationService(
         requestId: String,
         conversationId: String,
         history: MutableList<ConversationTurn>,
+        connectionId: String,
         emit: suspend (SocketEvent) -> Unit,
     ) {
         when (result) {
@@ -289,6 +312,70 @@ class ConversationService(
                 }
                 emitDelta(requestId, conversationId, result.text, emit)
                 complete(requestId, conversationId, result.text, history, emit)
+            }
+            is TaskResult.NavigationAction -> {
+                val outcome = navigationCoordinator.awaitResult(
+                    actionId = result.actionId,
+                    requestId = requestId,
+                    conversationId = conversationId,
+                    connectionId = connectionId,
+                ) {
+                    emit(
+                        SocketEvent(
+                            type = SocketEventType.NAVIGATION_ACTION,
+                            requestId = requestId,
+                            conversationId = conversationId,
+                            payload = json.encodeToJsonElement(
+                                NavigationActionPayload(
+                                    result.actionId,
+                                    NavigationActionType.OPEN_MAP_SEARCH,
+                                    result.destination,
+                                ),
+                            ),
+                        ),
+                    )
+                    emit(
+                        SocketEvent(
+                            type = SocketEventType.TOOL_PROGRESS,
+                            requestId = requestId,
+                            conversationId = conversationId,
+                            payload = json.encodeToJsonElement(
+                                ToolProgressPayload(
+                                    result.actionId,
+                                    "map_search",
+                                    ToolCallStatus.RUNNING,
+                                    "正在打开地图并搜索目的地",
+                                ),
+                            ),
+                        ),
+                    )
+                }
+                val (status, message) = when (outcome) {
+                    is NavigationAwaitResult.Completed -> when (outcome.status) {
+                        NavigationExecutionStatus.MAP_APP_LAUNCHED ->
+                            ToolCallStatus.COMPLETED to "已为你打开地图，请在地图中确认目的地。"
+                        NavigationExecutionStatus.NO_MAP_APP ->
+                            ToolCallStatus.FAILED to "未找到可处理地点搜索的地图应用。"
+                        NavigationExecutionStatus.LAUNCH_FAILED ->
+                            ToolCallStatus.FAILED to "地图应用未能打开，请稍后重试或检查地图应用。"
+                        NavigationExecutionStatus.USER_CANCELLED ->
+                            ToolCallStatus.CANCELLED to "已取消打开地图。"
+                    }
+                    NavigationAwaitResult.TimedOut ->
+                        ToolCallStatus.FAILED to "地图请求超时，暂时无法确认是否已打开地图。"
+                }
+                emit(
+                    SocketEvent(
+                        type = SocketEventType.TOOL_PROGRESS,
+                        requestId = requestId,
+                        conversationId = conversationId,
+                        payload = json.encodeToJsonElement(
+                            ToolProgressPayload(result.actionId, "map_search", status, message),
+                        ),
+                    ),
+                )
+                emitDelta(requestId, conversationId, message, emit)
+                complete(requestId, conversationId, message, history, emit)
             }
             is TaskResult.Failure -> {
                 emit(errorEvent(requestId, conversationId, result.code, result.message))

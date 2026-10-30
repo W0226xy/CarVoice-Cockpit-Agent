@@ -89,6 +89,19 @@ class ContractSerializationTest {
     }
 
     @Test
+    fun `navigation action and result payloads round trip`() {
+        val action = NavigationActionPayload("action-1", NavigationActionType.OPEN_MAP_SEARCH, "扬州东站")
+        val result = NavigationExecutionResultPayload(
+            "action-1", NavigationExecutionStatus.MAP_APP_LAUNCHED,
+        )
+        assertEquals(action, Json.decodeFromString<NavigationActionPayload>(Json.encodeToString(action)))
+        assertEquals(
+            result,
+            Json.decodeFromString<NavigationExecutionResultPayload>(Json.encodeToString(result)),
+        )
+    }
+
+    @Test
     fun `web search sources event round trips and unknown event stays compatible`() {
         val payload = WebSearchSourcesPayload(
             conversationId = "conversation-1",

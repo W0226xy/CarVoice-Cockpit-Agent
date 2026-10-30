@@ -25,6 +25,10 @@ import com.carvoice.cockpit.model.KnowledgeSourcesUi
 import com.carvoice.cockpit.model.KnowledgeSourceUi
 import com.carvoice.cockpit.ui.speech.NoOpSpeechRecognitionLifecycle
 import com.carvoice.cockpit.ui.speech.SpeechRecognitionLifecycle
+import com.carvoice.cockpit.navigation.NavigationExecutor
+import com.carvoice.cockpit.navigation.NavigationExecution
+import com.carvoice.contracts.NavigationExecutionStatus
+import com.carvoice.contracts.NavigationActionType
 import java.util.UUID
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -41,6 +45,7 @@ class ConversationViewModel(
     private val workerDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
     private val historyRepository: ConversationHistoryRepository = EmptyConversationHistoryRepository,
     private val speechLifecycle: SpeechRecognitionLifecycle = NoOpSpeechRecognitionLifecycle,
+    private val navigationExecutor: NavigationExecutor = NoOpNavigationExecutor,
 ) : ViewModel() {
     private val _uiState = kotlinx.coroutines.flow.MutableStateFlow(
         ConversationUiState(connectionState = repository.connectionState.value),
@@ -56,6 +61,8 @@ class ConversationViewModel(
     private val assistantMessageIdsByRequest = mutableMapOf<String, String>()
     /** IDs removed optimistically, so a last Room emission cannot resurrect a deleted row. */
     private val locallyDeletedConversationIds = mutableSetOf<String>()
+    /** Process-lifetime replay guard; it intentionally does not survive an app process restart. */
+    private val executedNavigationActionIds = mutableSetOf<String>()
 
     init {
         repository.connect()
@@ -413,10 +420,10 @@ class ConversationViewModel(
                     _uiState.update {
                         it.copy(
                             toolExecution = ToolExecutionUiState(
-                                title = if (event.toolName == "tavily_web_search") {
-                                    "联网搜索"
-                                } else {
-                                    "模拟座舱"
+                                title = when (event.toolName) {
+                                    "tavily_web_search" -> "联网搜索"
+                                    "map_search" -> "地图搜索"
+                                    else -> "模拟座舱"
                                 },
                                 detail = event.message,
                                 state = state,
@@ -444,6 +451,26 @@ class ConversationViewModel(
             }
             is ConversationStreamEvent.WebSearchSources -> attachSearchSources(event)
             is ConversationStreamEvent.KnowledgeSources -> attachKnowledgeSources(event)
+            is ConversationStreamEvent.NavigationAction -> executeNavigationAction(event)
+        }
+    }
+
+    private fun executeNavigationAction(event: ConversationStreamEvent.NavigationAction) {
+        if (event.actionType != NavigationActionType.OPEN_MAP_SEARCH) return
+        if (!executedNavigationActionIds.add(event.actionId)) return
+        viewModelScope.launch(workerDispatcher) {
+            val execution = runCatching {
+                navigationExecutor.openMapSearch(event.destination)
+            }.getOrElse {
+                NavigationExecution(NavigationExecutionStatus.LAUNCH_FAILED, "地图应用启动失败")
+            }
+            repository.sendNavigationExecutionResult(
+                event.conversationId,
+                event.requestId,
+                event.actionId,
+                execution.status,
+                execution.errorMessage,
+            )
         }
     }
 
@@ -778,6 +805,11 @@ private object EmptyConversationHistoryRepository : ConversationHistoryRepositor
     override suspend fun markAssistantFailed(conversationId: String, message: ChatMessage) = Unit
     override suspend fun deleteConversation(conversationId: String) = Unit
     override suspend fun recentCompletedMessages(conversationId: String) = emptyList<ChatMessage>()
+}
+
+private object NoOpNavigationExecutor : NavigationExecutor {
+    override fun openMapSearch(destination: String): NavigationExecution =
+        NavigationExecution(NavigationExecutionStatus.LAUNCH_FAILED, "地图功能不可用")
 }
 
 private inline fun List<ConversationSession>.updateSession(

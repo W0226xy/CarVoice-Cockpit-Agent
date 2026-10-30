@@ -108,6 +108,24 @@ WebSocket 事件后续统一使用以下信封：
 
 ## 模拟座舱确认
 
+## 地图地点搜索动作
+
+服务端识别到带目的地的导航请求后，先下发 `navigation_action`，不会在此时发送最终助手回复。事件信封中的 `requestId`、`conversationId` 与 payload 的 `actionId` 共同关联一次动作：
+
+```json
+{"actionId":"action-001","actionType":"OPEN_MAP_SEARCH","destination":"扬州东站"}
+```
+
+Android 必须以同一信封 `requestId`、`conversationId` 回传 `navigation_execution_result`：
+
+```json
+{"actionId":"action-001","status":"MAP_APP_LAUNCHED"}
+```
+
+`status` 为 `MAP_APP_LAUNCHED`、`NO_MAP_APP`、`LAUNCH_FAILED` 或 `USER_CANCELLED`。`MAP_APP_LAUNCHED` 仅表示 Android 已将地点搜索 Intent 交给地图应用，绝不表示路线已规划或导航已开始。服务端只接受属于同一 WebSocket 连接、动作、请求和会话的第一条结果；重复、迟到或错连结果被忽略。20 秒未收到结果时服务端生成“结果未知/请求超时”的最终消息，断线或服务重启不会重放动作。
+
+旧客户端会忽略未知下行事件，因而不会回传结果；服务端将超时结束等待。
+
 `control_confirmation_required`：
 
 ```json
